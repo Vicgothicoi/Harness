@@ -1,0 +1,15 @@
+.env
+__pycache__/
+workspace/
+*.pyc
+.DS_Store
+jobs/
+venv/
+.idea/
+.harbor/
+tmp*/
+.tmp_*
+zzzsub/
+
+*.md
+!README.md
