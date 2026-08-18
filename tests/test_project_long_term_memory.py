@@ -39,8 +39,7 @@ from memory.project_memory import (
     refresh_project_memory,
     seed_project_memory,
 )
-from memory.state_memory import STATE_MARKER, apply_patch, inject_state_summary
-from agents import TaskBoard
+from memory.state_memory import STATE_MARKER, TaskBoard, apply_patch, inject_state_summary
 
 
 class ProjectMemoryTests(unittest.TestCase):

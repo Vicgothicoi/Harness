@@ -19,10 +19,9 @@ def _install_fake_openai_module() -> None:
 
 _install_fake_openai_module()
 
-from agents import TaskBoard
 from memory.long_term_memory import LONG_TERM_MARKER, LongTermMemory
 from memory.project_memory import PROJECT_MARKER, ProjectMemory
-from memory.state_memory import STATE_MARKER, apply_patch
+from memory.state_memory import STATE_MARKER, TaskBoard, apply_patch
 from memory.working_memory import build_working_memory
 
 

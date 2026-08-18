@@ -6,6 +6,7 @@ agent's working messages each iteration.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import config
@@ -13,7 +14,20 @@ import config
 STATE_MARKER = "[STATE MEMORY]"
 
 
-def to_markdown(board) -> str:
+@dataclass
+class TaskBoard:
+    goal: str = ""
+    steps: list[str] = field(default_factory=list)
+    current_step: str = ""
+    completed_steps: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    next_action: str = ""
+    update_count: int = 0
+    requires_update: bool = False
+    needs_final_update: bool = False
+
+
+def to_markdown(board: TaskBoard) -> str:
     """Serialize TaskBoard to the progress.md format."""
     goal = board.goal or "(unset)"
     steps = board.steps or []
@@ -57,7 +71,7 @@ def to_markdown(board) -> str:
     return "\n".join(lines) + "\n"
 
 
-def to_context_block(board, max_chars: int | None = None) -> str:
+def to_context_block(board: TaskBoard, max_chars: int | None = None) -> str:
     """Short summary injected into the working context window."""
     if max_chars is None:
         max_chars = getattr(config, "STATE_CONTEXT_MAX_CHARS", 1500)
@@ -68,7 +82,7 @@ def to_context_block(board, max_chars: int | None = None) -> str:
     return f"{STATE_MARKER}\n{body}"
 
 
-def persist_task_board(board, workspace: str | Path | None = None) -> Path:
+def persist_task_board(board: TaskBoard, workspace: str | Path | None = None) -> Path:
     """Write TaskBoard to progress.md. Returns the path written."""
     ws = Path(workspace or config.WORKSPACE)
     path = ws / config.PROGRESS_FILE
@@ -77,7 +91,7 @@ def persist_task_board(board, workspace: str | Path | None = None) -> Path:
     return path
 
 
-def apply_patch(board, patch: dict) -> None:
+def apply_patch(board: TaskBoard, patch: dict) -> None:
     """
     Apply a partial patch dict onto TaskBoard.
 
@@ -125,7 +139,7 @@ def apply_patch(board, patch: dict) -> None:
     board.needs_final_update = False
 
 
-def inject_state_summary(messages: list[dict], board, max_chars: int | None = None) -> list[dict]:
+def inject_state_summary(messages: list[dict], board: TaskBoard, max_chars: int | None = None) -> list[dict]:
     """
     Ensure exactly one [STATE MEMORY] user message exists in the conversation.
 
@@ -152,7 +166,7 @@ def inject_state_summary(messages: list[dict], board, max_chars: int | None = No
     return [state_msg] + cleaned
 
 
-def seed_task_board(board, task: str) -> None:
+def seed_task_board(board: TaskBoard, task: str) -> None:
     """Initialize TaskBoard from the raw task string without an LLM call."""
     goal = (task or "").strip()
     if len(goal) > 500:

@@ -376,6 +376,21 @@ class TimeBudgetHook(AgentHook):
 
 
 # ---------------------------------------------------------------------------
+# Recovery state (owned by RecoveryStrategyHook; held by AgentRuntimeState)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RecoveryState:
+    mode: str = "NORMAL"
+    failure_signature: str = ""
+    repeat_count: int = 0
+    last_successful_action: str = ""
+    last_verification_result: str = ""
+    tools_in_mode: int = 0  # tool calls since entering current recovery mode
+
+
+# ---------------------------------------------------------------------------
 # Task Tracking (forced decomposition)
 # ---------------------------------------------------------------------------
 

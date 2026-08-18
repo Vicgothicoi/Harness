@@ -1,4 +1,4 @@
 openai>=1.0.0
-tiktoken>=0.5.0  # optional: improves token counting accuracy, falls back to char estimation
-playwright>=1.40.0  # required by Browser Testing MCP (browser_mcp_server.py / browser_session.py)
-fastmcp>=2.0.0  # required by browser_mcp_server.py / browser_mcp_client.py
+tiktoken>=0.5.0
+playwright>=1.40.0
+fastmcp>=2.0.0

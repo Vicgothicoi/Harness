@@ -14,12 +14,13 @@ from openai import OpenAI
 import config
 import tools
 import context
-from memory.state_memory import persist_task_board, seed_task_board
+from hooks import RecoveryState
+from memory.state_memory import TaskBoard, persist_task_board, seed_task_board
 from memory.working_memory import build_working_memory, build_working_memory_from_runtime
 from compression.observation import compress_observation
 from compression.trace import TraceBuffer, compress_trace, record_from_tool
-from compression.full import full_compress_reset
 from compression.state import compress_state
+from compression.full import full_compress_reset
 from shell_session import PersistentShellSession
 
 log = logging.getLogger("harness")
@@ -28,8 +29,11 @@ ACTION_TOOLS = {"run_bash", "write_file", "delegate_task", "delegate_tasks"}
 
 
 def _reinject_memory_blocks(messages: list[dict], runtime_state: "AgentRuntimeState") -> list[dict]:
-    """Re-project memory layers after trace/full compression (no state compress)."""
+    """Re-project memory layers"""
     return build_working_memory_from_runtime(messages, runtime_state)
+
+def _truncate(s: str, n: int) -> str:
+    return s[:n] + "..." if len(s) > n else s
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +59,6 @@ class TraceWriter:
             test_file.unlink()
             self._path = trace_dir / f"_trace_{agent_name}.jsonl"
         except Exception:
-            # Workspace not writable, use harness-agent dir
             self._path = Path(__file__).parent / f"_trace_{agent_name}.jsonl"
 
     def _write(self, event_type: str, data: dict):
@@ -67,7 +70,6 @@ class TraceWriter:
                 **data,
             }
             line = json.dumps(entry, ensure_ascii=False)[:10000]
-            # Write to file
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
             # Also print to stderr so Harbor logs capture it
@@ -129,15 +131,14 @@ def get_client() -> OpenAI:
 
 
 def llm_call_simple(messages: list[dict]) -> str:
-    """Simple LLM call without tools — used for summarization.
-    Retries on rate limits to avoid crashing the agent during context compaction."""
+    """Simple LLM call without tools — used for summarization"""
     import random
     for attempt in range(4):
         try:
             resp = get_client().chat.completions.create(
                 model=config.MODEL,
                 messages=messages,
-                max_tokens=10000,
+                max_tokens=200000,
             )
             return resp.choices[0].message.content or ""
         except Exception as e:
@@ -159,35 +160,12 @@ def llm_call_simple(messages: list[dict]) -> str:
 
 
 @dataclass
-class TaskBoard:
-    goal: str = ""
-    steps: list[str] = field(default_factory=list)
-    current_step: str = ""
-    completed_steps: list[str] = field(default_factory=list)
-    blockers: list[str] = field(default_factory=list)
-    next_action: str = ""
-    update_count: int = 0
-    requires_update: bool = False
-    needs_final_update: bool = False
-
-
-@dataclass
-class RecoveryState:
-    mode: str = "NORMAL"
-    failure_signature: str = ""
-    repeat_count: int = 0
-    last_successful_action: str = ""
-    last_verification_result: str = ""
-    tools_in_mode: int = 0  # tool calls since entering current recovery mode
-
-
-@dataclass
 class AgentRuntimeState:
     shell_session: PersistentShellSession | None = None
     task_board: TaskBoard = field(default_factory=TaskBoard)
     recovery: RecoveryState = field(default_factory=RecoveryState)
-    action_tool_count: int = 0
     trace_buffer: TraceBuffer = field(default_factory=TraceBuffer)
+    action_tool_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -211,16 +189,16 @@ class Agent:
     """
 
     def __init__(self, name: str, system_prompt: str, use_tools: bool = True,
+                 time_budget: float | None = None,
                  extra_tool_schemas: list[dict] | None = None,
                  hooks: list | None = None,
-                 time_budget: float | None = None,
                  mcp_bridges: list | None = None):
         self.name = name
         self.system_prompt = system_prompt
         self.use_tools = use_tools
-        self.extra_tool_schemas = extra_tool_schemas or []
-        self.hooks = hooks or []  # list[AgentHook]
         self.time_budget = time_budget
+        self.extra_tool_schemas = extra_tool_schemas or []
+        self.hooks = hooks or []
         self.mcp_bridges = mcp_bridges or []  # list[McpBridge]
         self._mcp_schemas: list[dict] = []
 
@@ -268,11 +246,10 @@ class Agent:
         trace: TraceWriter,
     ) -> list[dict]:
         """
-        State compression, then project working memory into the window.
+        State compression.
 
         Iteration 1 seeds the board from the task (no LLM). Later iterations
         run LLM state compression every loop and persist progress.md.
-        Memory blocks (STATE / PROJECT / LTM) are assembled by Context Builder.
         """
         board = runtime_state.task_board
         if iteration <= 1 or board.update_count == 0:
@@ -305,7 +282,6 @@ class Agent:
                     recovery.tools_in_mode = 0
                     log.info("Recovery: RETHINK cleared after state compression")
 
-        # Working memory: project state / project / LTM prefs into the window
         return build_working_memory(messages, task_board=board, load_defaults=True)
 
     def run(self, task: str) -> str:
@@ -332,7 +308,7 @@ class Agent:
 
         try:
             for iteration in range(1, config.MAX_AGENT_ITERATIONS + 1):
-            # --- State memory: compress + inject summary ---
+            # --- State memory ---
                 messages = self._refresh_state_memory(
                     messages, runtime_state, task, iteration, trace
                 )
@@ -373,7 +349,7 @@ class Agent:
                 kwargs = dict(
                     model=config.MODEL,
                     messages=messages,
-                    max_tokens=32768,
+                    max_tokens=200000,
                 )
                 if self.use_tools:
                     kwargs["tools"] = (
@@ -389,14 +365,12 @@ class Agent:
                     err_str = str(e)
                     trace.error("api_error", err_str)
 
-                # Rate limits get longer backoff and don't count toward abort threshold
                     if "rate_limit" in err_str.lower() or "429" in err_str:
                         import random
                         # 指数退避 + 上限控制 + 随机抖动
                         wait = min(2 ** (consecutive_errors + 2), 120) + random.uniform(0, 5)
                         log.warning(f"[{self.name}] Rate limited, waiting {wait:.1f}s...")
                         time.sleep(wait)
-                        # Don't increment consecutive_errors — rate limits are transient
                         continue
 
                     log.error(f"[{self.name}] API error: {e}")
@@ -449,7 +423,7 @@ class Agent:
                     last_text = msg.content
                     log.info(f"[{self.name}] assistant: {msg.content[:200]}...")
 
-            # --- If no tool calls, check pre-exit hooks ---
+            # --- Hooks: pre-exit ---
                 if not msg.tool_calls:
                     forced_continue = False
                     for hook in self.hooks:
@@ -482,6 +456,7 @@ class Agent:
                         })
                         continue
 
+            # --- Hooks: before-tool ---
                     blocked = None
                     for hook in self.hooks:
                         blocked = hook.before_tool(
@@ -510,7 +485,7 @@ class Agent:
                     log.debug(f"[{self.name}] tool result: {_truncate(result, 200)}")
                     trace.tool_call(fn_name, fn_args, result)
 
-                    # Lightweight ActionRecord (off-window) + observation compression
+            # --- observation compression --- 
                     runtime_state.trace_buffer.add(
                         record_from_tool(fn_name, fn_args, result, iteration=iteration)
                     )
@@ -530,7 +505,7 @@ class Agent:
                         runtime_state.action_tool_count += 1
                         runtime_state.task_board.needs_final_update = True
 
-                    # --- Hooks: post-tool ---
+            # --- Hooks: post-tool ---
                     for hook in self.hooks:
                         inject = hook.post_tool(
                             fn_name,
@@ -590,6 +565,3 @@ class Agent:
 
         return last_text
 
-
-def _truncate(s: str, n: int) -> str:
-    return s[:n] + "..." if len(s) > n else s

@@ -24,9 +24,10 @@ def _install_fake_openai_module() -> None:
 _install_fake_openai_module()
 
 import config
-from agents import Agent, AgentRuntimeState, TaskBoard, TraceWriter
+from agents import Agent, AgentRuntimeState, TraceWriter
 from memory.state_memory import (
     STATE_MARKER,
+    TaskBoard,
     apply_patch,
     inject_state_summary,
     persist_task_board,

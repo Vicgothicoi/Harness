@@ -15,6 +15,7 @@ from memory.project_memory import (
 )
 from memory.state_memory import (
     STATE_MARKER,
+    TaskBoard,
     apply_patch,
     inject_state_summary,
     persist_task_board,
@@ -28,6 +29,7 @@ __all__ = [
     "STATE_MARKER",
     "PROJECT_MARKER",
     "LONG_TERM_MARKER",
+    "TaskBoard",
     "ProjectMemory",
     "LongTermMemory",
     "apply_patch",
