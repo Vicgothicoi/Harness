@@ -44,18 +44,6 @@ log = logging.getLogger("harness")
 class Harness:
     """
     Generic orchestration loop driven by a Profile.
-
-    The Profile defines:
-      - System prompts for each agent role
-      - Which tools each agent gets
-      - Evaluation criteria and pass threshold
-      - Whether contract negotiation is enabled
-
-    The Harness handles:
-      - The Plan → Build → Evaluate → Iterate loop
-      - Context lifecycle (compaction / reset)
-      - Score tracking and REFINE/PIVOT decisions
-      - Workspace and git management
     """
 
     def __init__(self, profile: BaseProfile):
@@ -111,7 +99,8 @@ class Harness:
             Path(config.WORKSPACE).mkdir(parents=True, exist_ok=True)
         else:
             from datetime import datetime
-            slug = re.sub(r'[^a-z0-9]+', '-', user_prompt.lower().strip())[:40].strip('-')
+            # slug = re.sub(r'[^a-z0-9]+', '-', user_prompt.lower().strip())[:40].strip('-')
+            slug = re.sub(r'[\\/:*?"<>|]', "_", user_prompt).strip()[:20]
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             project_name = f"{timestamp}_{slug}"
             project_dir = os.path.join(config.WORKSPACE, project_name)
@@ -129,7 +118,7 @@ class Harness:
 
         total_start = time.time()
         max_rounds = self.profile.max_rounds() or config.MAX_HARNESS_ROUNDS
-        threshold = self.profile.pass_threshold()
+        threshold = self.profile.pass_threshold() or config.PASS_THRESHOLD
 
         # ---- Resolve dynamic time allocation ----
         allocation = self.profile.resolve_time_allocation(user_prompt)

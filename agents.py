@@ -15,8 +15,8 @@ import config
 import tools
 import context
 from hooks import RecoveryState
-from memory.state_memory import TaskBoard, persist_task_board, seed_task_board
 from memory.working_memory import build_working_memory, build_working_memory_from_runtime
+from memory.state_memory import TaskBoard, persist_task_board, seed_task_board
 from compression.observation import compress_observation
 from compression.trace import TraceBuffer, compress_trace, record_from_tool
 from compression.state import compress_state
@@ -196,9 +196,9 @@ class Agent:
         self.name = name
         self.system_prompt = system_prompt
         self.use_tools = use_tools
-        self.time_budget = time_budget
         self.extra_tool_schemas = extra_tool_schemas or []
         self.hooks = hooks or []
+        self.time_budget = time_budget
         self.mcp_bridges = mcp_bridges or []  # list[McpBridge]
         self._mcp_schemas: list[dict] = []
 
