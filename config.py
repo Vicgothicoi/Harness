@@ -61,8 +61,8 @@ LONG_TERM_MEMORY_FILE = "long_term_memory.json"
 STATE_CONTEXT_MAX_CHARS = 1500
 PROJECT_CONTEXT_MAX_CHARS = 2000
 LONG_TERM_PREFS_MAX_CHARS = 800
-# Global long-term memory directory (outside workspace). Empty = ~/.harness/memory
-LONG_TERM_MEMORY_DIR = ""
+# Global long-term memory directory. Empty = ~/( + .harness/memory)
+LONG_TERM_MEMORY_DIR = "D:/Code/Python/multi-coding-agent"
 
 # --- Compression ---
 OBSERVATION_MAX_CHARS = 8000

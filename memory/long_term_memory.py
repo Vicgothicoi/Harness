@@ -148,7 +148,7 @@ class LongTermMemory:
 
     def preferences_context_block(self, max_chars: int | None = None) -> str:
         """
-        Projection for working memory — preferences only (no RAG over patterns yet).
+        Projection for working memory — preferences only.
         """
         if max_chars is None:
             max_chars = getattr(config, "LONG_TERM_PREFS_MAX_CHARS", 800)
@@ -157,10 +157,10 @@ class LongTermMemory:
         lines = [LONG_TERM_MARKER, "User preferences:"]
         for k, v in list(self.user_preferences.items())[:20]:
             lines.append(f"  - {k}: {v}")
-        # Note that patterns exist but are not retrieved yet
+        # FIXME: Note that patterns exist but are not retrieved yet
         if self.patterns:
             lines.append(
-                f"(Stored lessons: {len(self.patterns)} — retrieval not enabled yet)"
+                f"(Stored lessons: {len(self.patterns)})"
             )
         body = "\n".join(lines)
         if len(body) > max_chars:
@@ -213,7 +213,7 @@ def learn_from_task(
     memory_dir: str | Path | None = None,
 ) -> LongTermMemory:
     """
-    After harness completion, summarize transferable lessons into long-term memory.
+    After task completion, summarize transferable lessons into long-term memory.
     Still runs on failure but with lower expected yield (model may return empty).
     """
     from memory.json_parse import parse_json_object

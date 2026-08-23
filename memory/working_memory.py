@@ -1,13 +1,12 @@
 """
 Working memory — Context Builder for the LLM window.
 
-Assembles projections of off-window stores into the conversation in a fixed
-order (replace-in-place, never append duplicates):
+Assembles projections of off-window stores into the conversation in a fixed order:
 
-  system
+  System Prompt 
   [STATE MEMORY]
   [PROJECT MEMORY]
-  [LONG-TERM MEMORY]   # preferences only until RAG exists
+  [LONG-TERM MEMORY]
   ... task / dialogue / tools ...
 
 Does not run compression; callers refresh TaskBoard / project JSON separately.
@@ -30,10 +29,9 @@ def build_working_memory(
     """
     Project memory layers into `messages` and return the working window.
 
-    If `load_defaults` is True, missing project/LTM args are loaded from disk.
-    Pass explicit empty ProjectMemory()/LongTermMemory() with load_defaults=False
-    to skip loading (tests).
+    If `load_defaults` is True, missing project/long_term memory args are loaded from disk..
     """
+
     if task_board is not None:
         messages = inject_state_summary(messages, task_board)
 
