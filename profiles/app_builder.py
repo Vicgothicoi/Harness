@@ -33,7 +33,9 @@ class AppBuilderProfile(BaseProfile):
         )
 
     def contract_proposer(self) -> AgentConfig:
-        return AgentConfig(system_prompt=prompts.CONTRACT_BUILDER_SYSTEM)
+        return AgentConfig(system_prompt="", enabled=False)
+        # return AgentConfig(system_prompt=prompts.CONTRACT_BUILDER_SYSTEM)
 
     def contract_reviewer(self) -> AgentConfig:
-        return AgentConfig(system_prompt=prompts.CONTRACT_REVIEWER_SYSTEM)
+        return AgentConfig(system_prompt="", enabled=False)
+        # return AgentConfig(system_prompt=prompts.CONTRACT_REVIEWER_SYSTEM)

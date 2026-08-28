@@ -154,6 +154,8 @@ class Harness:
         seed_project_memory(user_prompt)
         log.info(f"Project memory seeded at {config.PROJECT_MEMORY_FILE}")
 
+
+
         # ---- Phase 2: Build → Evaluate loop ----
         score_history: list[float] = []
         passed = False
@@ -261,7 +263,12 @@ class Harness:
         log.info("=" * 60)
 
     def _negotiate_contract(self, round_num: int, max_iterations: int = 3) -> None:
-        self.contract_proposer.run(
+        proposer = self.contract_proposer
+        reviewer = self.contract_reviewer
+        if proposer is None or reviewer is None:
+            return
+
+        proposer.run(
             f"This is round {round_num}.\n"
             f"Read spec.md. If feedback.md exists, read it too.\n"
             f"Propose a sprint contract for this round. Write it to contract.md."
@@ -270,7 +277,7 @@ class Harness:
         for i in range(max_iterations):
             log.info(f"[contract] Review iteration {i + 1}/{max_iterations}")
 
-            self.contract_reviewer.run(
+            reviewer.run(
                 f"Review the sprint contract in contract.md for round {round_num}.\n"
                 f"Read spec.md for context. Read feedback.md if it exists.\n"
                 f"If acceptable, write APPROVED at the top and save to contract.md.\n"
@@ -286,7 +293,7 @@ class Harness:
 
             if i < max_iterations - 1:
                 log.info("[contract] Contract needs revision...")
-                self.contract_proposer.run(
+                proposer.run(
                     f"The reviewer requested changes. Read contract.md and revise."
                 )
 

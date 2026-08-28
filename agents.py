@@ -2,6 +2,7 @@
 Agent implementation — the core while loop with tool use.
 Uses OpenAI-compatible chat completions API with function calling.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,10 @@ import config
 import tools
 import context
 from hooks import RecoveryState
-from memory.working_memory import build_working_memory, build_working_memory_from_runtime
+from memory.working_memory import (
+    build_working_memory,
+    build_working_memory_from_runtime,
+)
 from memory.state_memory import TaskBoard, persist_task_board, seed_task_board
 from compression.observation import compress_observation
 from compression.trace import TraceBuffer, compress_trace, record_from_tool
@@ -28,9 +32,12 @@ log = logging.getLogger("harness")
 ACTION_TOOLS = {"run_bash", "write_file", "delegate_task", "delegate_tasks"}
 
 
-def _reinject_memory_blocks(messages: list[dict], runtime_state: "AgentRuntimeState") -> list[dict]:
+def _reinject_memory_blocks(
+    messages: list[dict], runtime_state: "AgentRuntimeState"
+) -> list[dict]:
     """Re-project memory layers"""
     return build_working_memory_from_runtime(messages, runtime_state)
+
 
 def _truncate(s: str, n: int) -> str:
     return s[:n] + "..." if len(s) > n else s
@@ -39,6 +46,7 @@ def _truncate(s: str, n: int) -> str:
 # ---------------------------------------------------------------------------
 # Trace writer — records every agent event to a JSONL file
 # ---------------------------------------------------------------------------
+
 
 class TraceWriter:
     """Appends structured events to a JSONL trace file in the workspace.
@@ -74,6 +82,7 @@ class TraceWriter:
                 f.write(line + "\n")
             # Also print to stderr so Harbor logs capture it
             import sys
+
             print(f"[TRACE] {line}", file=sys.stderr)
         except Exception:
             pass  # never let tracing break the agent
@@ -81,26 +90,37 @@ class TraceWriter:
     def iteration(self, n: int, tokens: int):
         self._write("iteration", {"n": n, "tokens": tokens})
 
-    def llm_response(self, content: str | None, tool_calls: list | None, finish_reason: str | None):
-        self._write("llm_response", {
-            "content": (content or "")[:500],
-            "tool_calls": [tc["function"]["name"] for tc in (tool_calls or [])],
-            "finish_reason": finish_reason,
-        })
+    def llm_response(
+        self, content: str | None, tool_calls: list | None, finish_reason: str | None
+    ):
+        self._write(
+            "llm_response",
+            {
+                "content": (content or "")[:500],
+                "tool_calls": [tc["function"]["name"] for tc in (tool_calls or [])],
+                "finish_reason": finish_reason,
+            },
+        )
 
     def tool_call(self, name: str, args: dict, result: str):
-        self._write("tool_call", {
-            "tool": name,
-            "args": _truncate(json.dumps(args, ensure_ascii=False), 300),
-            "result": _truncate(result, 500),
-        })
+        self._write(
+            "tool_call",
+            {
+                "tool": name,
+                "args": _truncate(json.dumps(args, ensure_ascii=False), 300),
+                "result": _truncate(result, 500),
+            },
+        )
 
     def hook_inject(self, source: str, hook: str, message: str):
-        self._write("hook", {
-            "source": source,
-            "hook": hook,
-            "message": message[:300],
-        })
+        self._write(
+            "hook",
+            {
+                "source": source,
+                "hook": hook,
+                "message": message[:300],
+            },
+        )
 
     def context_event(self, event_type: str, reason: str = ""):
         self._write("context", {"type": event_type, "reason": reason})
@@ -110,6 +130,7 @@ class TraceWriter:
 
     def finish(self, reason: str, iterations: int):
         self._write("finish", {"reason": reason, "iterations": iterations})
+
 
 # ---------------------------------------------------------------------------
 # LLM client (singleton)
@@ -124,7 +145,7 @@ def get_client() -> OpenAI:
         _client = OpenAI(
             api_key=config.API_KEY,
             base_url=config.BASE_URL,
-            timeout=300.0,        # 5 min per request
+            timeout=300.0,  # 5 min per request
             max_retries=2,
         )
     return _client
@@ -133,6 +154,7 @@ def get_client() -> OpenAI:
 def llm_call_simple(messages: list[dict]) -> str:
     """Simple LLM call without tools — used for summarization"""
     import random
+
     for attempt in range(4):
         try:
             resp = get_client().chat.completions.create(
@@ -145,7 +167,9 @@ def llm_call_simple(messages: list[dict]) -> str:
             err_str = str(e)
             if ("rate_limit" in err_str.lower() or "429" in err_str) and attempt < 3:
                 wait = min(2 ** (attempt + 1), 30) + random.uniform(0, 3)
-                log.warning(f"llm_call_simple rate limited, waiting {wait:.1f}s (attempt {attempt+1}/4)")
+                log.warning(
+                    f"llm_call_simple rate limited, waiting {wait:.1f}s (attempt {attempt+1}/4)"
+                )
                 time.sleep(wait)
                 continue
             log.error(f"llm_call_simple failed: {e}")
@@ -172,6 +196,7 @@ class AgentRuntimeState:
 # Core agent loop
 # ---------------------------------------------------------------------------
 
+
 class Agent:
     """
     A single agent with a system prompt and tool access.
@@ -188,11 +213,16 @@ class Agent:
     No external code decides which skills to load — the agent does.
     """
 
-    def __init__(self, name: str, system_prompt: str, use_tools: bool = True,
-                 time_budget: float | None = None,
-                 extra_tool_schemas: list[dict] | None = None,
-                 hooks: list | None = None,
-                 mcp_bridges: list | None = None):
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        use_tools: bool = True,
+        time_budget: float | None = None,
+        extra_tool_schemas: list[dict] | None = None,
+        hooks: list | None = None,
+        mcp_bridges: list | None = None,
+    ):
         self.name = name
         self.system_prompt = system_prompt
         self.use_tools = use_tools
@@ -308,28 +338,39 @@ class Agent:
 
         try:
             for iteration in range(1, config.MAX_AGENT_ITERATIONS + 1):
-            # --- State memory ---
+                # --- State memory ---
                 messages = self._refresh_state_memory(
                     messages, runtime_state, task, iteration, trace
                 )
 
-            # --- Hooks: per-iteration ---
+                # --- Hooks: per-iteration ---
                 for hook in self.hooks:
                     inject = hook.per_iteration(
-                        iteration, messages, runtime_state=runtime_state, agent_name=self.name
+                        iteration,
+                        messages,
+                        runtime_state=runtime_state,
+                        agent_name=self.name,
                     )
                     if inject:
                         messages.append({"role": "user", "content": inject})
                         trace.hook_inject(type(hook).__name__, "per_iteration", inject)
 
-            # --- Context lifecycle check ---
+                # --- Context lifecycle check ---
                 token_count = context.count_tokens(messages)
                 log.info(f"[{self.name}] iteration={iteration}  tokens≈{token_count}")
                 trace.iteration(iteration, token_count)
 
-                if token_count > config.RESET_THRESHOLD or context.detect_anxiety(messages):
-                    reason = "anxiety detected" if token_count <= config.RESET_THRESHOLD else f"tokens {token_count} > threshold"
-                    log.warning(f"[{self.name}] Full-context compress (reset) triggered ({reason})...")
+                if token_count > config.RESET_THRESHOLD or context.detect_anxiety(
+                    messages
+                ):
+                    reason = (
+                        "anxiety detected"
+                        if token_count <= config.RESET_THRESHOLD
+                        else f"tokens {token_count} > threshold"
+                    )
+                    log.warning(
+                        f"[{self.name}] Full-context compress (reset) triggered ({reason})..."
+                    )
                     trace.context_event("full_compress", reason)
                     messages = full_compress_reset(
                         messages,
@@ -340,12 +381,14 @@ class Agent:
                     )
                     messages = _reinject_memory_blocks(messages, runtime_state)
                 elif token_count > config.COMPRESS_THRESHOLD:
-                    log.info(f"[{self.name}] Trace-compressing context (role={self.name})...")
+                    log.info(
+                        f"[{self.name}] Trace-compressing context (role={self.name})..."
+                    )
                     trace.context_event("trace_compress", f"tokens={token_count}")
                     messages = compress_trace(messages, runtime_state.trace_buffer)
                     messages = _reinject_memory_blocks(messages, runtime_state)
 
-            # --- LLM call ---
+                # --- LLM call ---
                 kwargs = dict(
                     model=config.MODEL,
                     messages=messages,
@@ -353,11 +396,15 @@ class Agent:
                 )
                 if self.use_tools:
                     kwargs["tools"] = (
-                        tools.TOOL_SCHEMAS
-                        + self.extra_tool_schemas
-                        + self._mcp_schemas
+                        tools.TOOL_SCHEMAS + self.extra_tool_schemas + self._mcp_schemas
                     )
                     kwargs["tool_choice"] = "auto"
+
+                file_path = Path(config.WORKSPACE) / "messages.txt"
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                messages_str = json.dumps(messages, ensure_ascii=False, indent=2)
+                with open(file_path, 'a', encoding='utf-8') as f:
+                    f.write(messages_str + '\n\n\n')
 
                 try:
                     response = client.chat.completions.create(**kwargs)
@@ -367,9 +414,14 @@ class Agent:
 
                     if "rate_limit" in err_str.lower() or "429" in err_str:
                         import random
+
                         # 指数退避 + 上限控制 + 随机抖动
-                        wait = min(2 ** (consecutive_errors + 2), 120) + random.uniform(0, 5)
-                        log.warning(f"[{self.name}] Rate limited, waiting {wait:.1f}s...")
+                        wait = min(2 ** (consecutive_errors + 2), 120) + random.uniform(
+                            0, 5
+                        )
+                        log.warning(
+                            f"[{self.name}] Rate limited, waiting {wait:.1f}s..."
+                        )
                         time.sleep(wait)
                         continue
 
@@ -379,14 +431,16 @@ class Agent:
                         log.error(f"[{self.name}] Too many API errors, aborting.")
                         trace.finish("api_errors", iteration)
                         break
-                    time.sleep(2 ** consecutive_errors)
+                    time.sleep(2**consecutive_errors)
                     continue
 
                 consecutive_errors = 0
 
-            # --- Guard against empty choices ---
+                # --- Guard against empty choices ---
                 if not response.choices:
-                    log.warning(f"[{self.name}] API returned empty choices. Retrying...")
+                    log.warning(
+                        f"[{self.name}] API returned empty choices. Retrying..."
+                    )
                     trace.error("empty_choices", "API returned no choices")
                     consecutive_errors += 1
                     if consecutive_errors >= config.MAX_TOOL_ERRORS:
@@ -399,7 +453,7 @@ class Agent:
                 choice = response.choices[0]
                 msg = choice.message
 
-            # --- Append assistant message to history ---
+                # --- Append assistant message to history ---
                 assistant_msg = {"role": "assistant", "content": msg.content}
                 if msg.tool_calls:
                     assistant_msg["tool_calls"] = [
@@ -415,15 +469,17 @@ class Agent:
                     ]
                 messages.append(assistant_msg)
 
-            # --- Trace the LLM response ---
-                trace.llm_response(msg.content, assistant_msg.get("tool_calls"), choice.finish_reason)
+                # --- Trace the LLM response ---
+                trace.llm_response(
+                    msg.content, assistant_msg.get("tool_calls"), choice.finish_reason
+                )
 
-            # --- If model produced text, capture it ---
+                # --- If model produced text, capture it ---
                 if msg.content:
                     last_text = msg.content
                     log.info(f"[{self.name}] assistant: {msg.content[:200]}...")
 
-            # --- Hooks: pre-exit ---
+                # --- Hooks: pre-exit ---
                 if not msg.tool_calls:
                     forced_continue = False
                     for hook in self.hooks:
@@ -441,22 +497,28 @@ class Agent:
                     trace.finish("no_tool_calls", iteration)
                     break
 
-            # --- Execute tool calls ---
+                # --- Execute tool calls ---
                 for tc in msg.tool_calls:
                     fn_name = tc.function.name
                     try:
                         fn_args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
-                        log.warning(f"[{self.name}] Bad JSON in tool call {fn_name}: {tc.function.arguments[:200]}")
-                        trace.error("bad_json", f"{fn_name}: {tc.function.arguments[:200]}")
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": f"[error] Invalid JSON arguments: {tc.function.arguments[:200]}",
-                        })
+                        log.warning(
+                            f"[{self.name}] Bad JSON in tool call {fn_name}: {tc.function.arguments[:200]}"
+                        )
+                        trace.error(
+                            "bad_json", f"{fn_name}: {tc.function.arguments[:200]}"
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"[error] Invalid JSON arguments: {tc.function.arguments[:200]}",
+                            }
+                        )
                         continue
 
-            # --- Hooks: before-tool ---
+                    # --- Hooks: before-tool ---
                     blocked = None
                     for hook in self.hooks:
                         blocked = hook.before_tool(
@@ -467,35 +529,45 @@ class Agent:
                             agent_name=self.name,
                         )
                         if blocked:
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": blocked,
-                            })
-                            trace.hook_inject(type(hook).__name__, "before_tool", blocked)
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "content": blocked,
+                                }
+                            )
+                            trace.hook_inject(
+                                type(hook).__name__, "before_tool", blocked
+                            )
                             break
                     if blocked:
                         continue
 
                     if fn_name == "run_bash" and runtime_state.shell_session is None:
-                        runtime_state.shell_session = PersistentShellSession(config.WORKSPACE)
+                        runtime_state.shell_session = PersistentShellSession(
+                            config.WORKSPACE
+                        )
 
-                    log.info(f"[{self.name}] tool: {fn_name}({_truncate(str(fn_args), 120)})")
+                    log.info(
+                        f"[{self.name}] tool: {fn_name}({_truncate(str(fn_args), 120)})"
+                    )
                     result = self._execute_tool(fn_name, fn_args, runtime_state)
                     log.debug(f"[{self.name}] tool result: {_truncate(result, 200)}")
                     trace.tool_call(fn_name, fn_args, result)
 
-            # --- observation compression --- 
+                    # --- observation compression ---
                     runtime_state.trace_buffer.add(
                         record_from_tool(fn_name, fn_args, result, iteration=iteration)
                     )
                     result = compress_observation(fn_name, fn_args, result)
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        }
+                    )
 
                     if (
                         fn_name in ACTION_TOOLS
@@ -505,7 +577,7 @@ class Agent:
                         runtime_state.action_tool_count += 1
                         runtime_state.task_board.needs_final_update = True
 
-            # --- Hooks: post-tool ---
+                    # --- Hooks: post-tool ---
                     for hook in self.hooks:
                         inject = hook.post_tool(
                             fn_name,
@@ -520,43 +592,49 @@ class Agent:
                             trace.hook_inject(type(hook).__name__, "post_tool", inject)
                             break
 
-            # --- Check finish reason ---
-                if choice.finish_reason == "stop": # 模型正常退出
+                # --- Check finish reason ---
+                if choice.finish_reason == "stop":  # 模型正常退出
                     log.info(f"[{self.name}] Finished (stop).")
                     trace.finish("stop", iteration)
                     break
 
-                if choice.finish_reason == "length": # 超过长度限制
+                if choice.finish_reason == "length":  # 超过长度限制
                     log.warning(f"[{self.name}] Output truncated (max_tokens hit).")
                     trace.error("length_truncated", "max_tokens hit")
                     # If tool calls were present, they were already executed above.
                     # Only tell the model they weren't executed if none were parsed
                     # (i.e. the truncation cut off the tool call JSON itself).
                     if msg.tool_calls:
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "[SYSTEM] Your response was truncated (token limit), but your tool calls "
-                                "WERE executed successfully. The results are above. "
-                                "If you had more tool calls planned, continue with the remaining ones now. "
-                                "Do NOT re-run the tools that already executed."
-                            ),
-                        })
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM] Your response was truncated (token limit), but your tool calls "
+                                    "WERE executed successfully. The results are above. "
+                                    "If you had more tool calls planned, continue with the remaining ones now. "
+                                    "Do NOT re-run the tools that already executed."
+                                ),
+                            }
+                        )
                     else:
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "[SYSTEM] Your last response was cut off because it exceeded the token limit. "
-                                "No tool calls were executed. "
-                                "Please retry, but split large files into smaller parts:\n"
-                                "1. Write the first half of the file with write_file\n"
-                                "2. Then write the second half as a separate file or append\n"
-                                "Or simplify the implementation to fit in one response."
-                            ),
-                        })
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM] Your last response was cut off because it exceeded the token limit. "
+                                    "No tool calls were executed. "
+                                    "Please retry, but split large files into smaller parts:\n"
+                                    "1. Write the first half of the file with write_file\n"
+                                    "2. Then write the second half as a separate file or append\n"
+                                    "Or simplify the implementation to fit in one response."
+                                ),
+                            }
+                        )
 
             else:
-                log.warning(f"[{self.name}] Hit max iterations ({config.MAX_AGENT_ITERATIONS}).")
+                log.warning(
+                    f"[{self.name}] Hit max iterations ({config.MAX_AGENT_ITERATIONS})."
+                )
                 trace.finish("max_iterations", config.MAX_AGENT_ITERATIONS)
         finally:
             if runtime_state.shell_session is not None:
@@ -564,4 +642,3 @@ class Agent:
             self._close_mcp_bridges()
 
         return last_text
-

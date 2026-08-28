@@ -2,7 +2,7 @@
 Long-term memory — cross-task preferences and reusable lessons.
 
 Stored globally (not inside a single workspace). This module supports:
-  - persisting user preferences (explicit tool / API)
+  - persisting user preferences
   - learning patterns after a harness run completes
   - injecting preferences into the working context
 
@@ -150,8 +150,11 @@ class LongTermMemory:
         """
         Projection for working memory — preferences only.
         """
-        if max_chars is None:
-            max_chars = getattr(config, "LONG_TERM_PREFS_MAX_CHARS", 800)
+        limit = (
+            max_chars
+            if max_chars is not None
+            else int(getattr(config, "LONG_TERM_PREFS_MAX_CHARS", 800) or 800)
+        )
         if not self.user_preferences:
             return ""
         lines = [LONG_TERM_MARKER, "User preferences:"]
@@ -163,8 +166,8 @@ class LongTermMemory:
                 f"(Stored lessons: {len(self.patterns)})"
             )
         body = "\n".join(lines)
-        if len(body) > max_chars:
-            body = body[: max_chars - 20] + "\n...(truncated)"
+        if len(body) > limit:
+            body = body[: max(0, limit - 20)] + "\n...(truncated)"
         return body
 
 
@@ -251,7 +254,8 @@ def learn_from_task(
         ]
     )
     data = parse_json_object(raw) or {}
-    patterns = data.get("patterns") if isinstance(data.get("patterns"), list) else []
+    raw_patterns = data.get("patterns")
+    patterns: list[dict] = raw_patterns if isinstance(raw_patterns, list) else []
     # Attach source_task
     for p in patterns:
         if isinstance(p, dict):
@@ -263,7 +267,8 @@ def learn_from_task(
                 except (TypeError, ValueError):
                     p["confidence"] = 0.4
 
-    anti = data.get("anti_patterns") if isinstance(data.get("anti_patterns"), list) else []
+    raw_anti = data.get("anti_patterns")
+    anti: list[str] = raw_anti if isinstance(raw_anti, list) else []
     added = ltm.add_patterns(patterns, anti)
 
     prefs = data.get("preferences")

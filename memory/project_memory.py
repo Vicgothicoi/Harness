@@ -1,8 +1,8 @@
 """
 Project memory — durable per-workspace knowledge for multi-round builds.
 
-Stored as project_memory.json in the workspace root. Updated at the end of
-each harness build round (not tied to full-context compression).
+Stored as project_memory.json in the workspace root. 
+Updated at the end of each harness build round (not tied to full-context compression).
 """
 from __future__ import annotations
 
@@ -98,8 +98,11 @@ class ProjectMemory:
     # --- context projection ---
 
     def to_context_block(self, max_chars: int | None = None) -> str:
-        if max_chars is None:
-            max_chars = getattr(config, "PROJECT_CONTEXT_MAX_CHARS", 2000)
+        limit = (
+            max_chars
+            if max_chars is not None
+            else int(getattr(config, "PROJECT_CONTEXT_MAX_CHARS", 2000) or 2000)
+        )
 
         if not self.architecture and not self.tech_stack and not self.key_files:
             if not self.source_prompt and not self.round_summaries:
@@ -157,8 +160,8 @@ class ProjectMemory:
                 lines.append(f"Last round: #{r}{score_s} — {summary}")
 
         body = "\n".join(lines)
-        if len(body) > max_chars:
-            body = body[: max_chars - 20] + "\n...(truncated)"
+        if len(body) > limit:
+            body = body[: max(0, limit - 20)] + "\n...(truncated)"
         return body
 
     def merge_delta(self, delta: dict, round_num: int | None = None) -> None:

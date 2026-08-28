@@ -73,12 +73,15 @@ def to_markdown(board: TaskBoard) -> str:
 
 def to_context_block(board: TaskBoard, max_chars: int | None = None) -> str:
     """Short summary injected into the working context window."""
-    if max_chars is None:
-        max_chars = getattr(config, "STATE_CONTEXT_MAX_CHARS", 1500)
+    limit = (
+        max_chars
+        if max_chars is not None
+        else int(getattr(config, "STATE_CONTEXT_MAX_CHARS", 1500) or 1500)
+    )
 
     body = to_markdown(board).strip()
-    if len(body) > max_chars:
-        body = body[: max_chars - 20] + "\n...(truncated)"
+    if len(body) > limit:
+        body = body[: max(0, limit - 20)] + "\n...(truncated)"
     return f"{STATE_MARKER}\n{body}"
 
 
@@ -95,8 +98,7 @@ def apply_patch(board: TaskBoard, patch: dict) -> None:
     """
     Apply a partial patch dict onto TaskBoard.
 
-    Expected keys (all optional): goal, steps, current_step, completed_steps,
-    blockers, next_action.
+    Expected keys (all optional): goal, steps, current_step, completed_steps, blockers, next_action.
     """
     if not isinstance(patch, dict):
         return
