@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import config
 
-_DEFAULT_MAX = 8000
+_DEFAULT_MAX = 10000
 _TOOL_MAX = {
-    "run_bash": 6000,
-    "read_file": 8000,
-    "read_skill_file": 8000,
+    "run_shell": 20000,
+    "read_file": 10000,
+    "read_skill_file": 10000,
     "web_fetch": 6000,
     "web_search": 4000,
     "delegate_task": 6000,

@@ -110,7 +110,7 @@ Agent 在隔离的 `config.WORKSPACE` 内操作，路径不允许逃出工作区
 |------|------|
 | `read_file` / `write_file` / `list_files` | 工作区内文件 |
 | `read_skill_file` | 读取 `skills/` 下的技能文档 |
-| `run_bash` | 持久 Shell 会话（保留 cwd / env） |
+| `run_shell` | 持久 Shell 会话（保留 cwd / env） |
 | `delegate_task` / `delegate_tasks` | 隔离上下文的子 Agent  |
 | `web_search` / `web_fetch` | 查文档、拉网页 |
 | `remember_preference` | 写入全局长期偏好 |

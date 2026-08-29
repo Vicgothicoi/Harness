@@ -29,8 +29,10 @@ from memory.state_memory import (
     STATE_MARKER,
     TaskBoard,
     apply_patch,
+    board_says_stop,
     inject_state_summary,
     persist_task_board,
+    seed_task_board,
 )
 from compression.state import compress_state
 from hooks import RecoveryStrategyHook
@@ -186,7 +188,12 @@ class StateMemoryTests(unittest.TestCase):
             os.makedirs(temp_dir, exist_ok=True)
             config.WORKSPACE = temp_dir
 
-            agent = Agent(name="builder", system_prompt="sys", use_tools=False)
+            agent = Agent(
+                name="builder",
+                system_prompt="sys",
+                use_tools=False,
+                enable_memory=True,
+            )
             state = agent._create_runtime_state("build a CLI")
             trace = MagicMock(spec=TraceWriter)
 
@@ -198,6 +205,8 @@ class StateMemoryTests(unittest.TestCase):
                 messages, state, "build a CLI", iteration=1, trace=trace
             )
             self.assertGreaterEqual(state.task_board.update_count, 1)
+            self.assertIn("smoke-check", state.task_board.steps)
+            self.assertIn("done", state.task_board.steps)
             self.assertTrue(Path(temp_dir, config.PROGRESS_FILE).exists())
             self.assertTrue(any(
                 isinstance(m.get("content"), str) and m["content"].startswith(STATE_MARKER)
@@ -230,6 +239,89 @@ class StateMemoryTests(unittest.TestCase):
             config.WORKSPACE = old_workspace
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_board_says_stop_and_seed_defaults(self):
+        temp_dir = os.path.join(os.getcwd(), "workspace", "test-state-stop")
+        old_workspace = config.WORKSPACE
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+            config.WORKSPACE = temp_dir
+            board = TaskBoard()
+            seed_task_board(board, "small task")
+            self.assertEqual(
+                board.steps,
+                ["understand task", "implement", "smoke-check", "done"],
+            )
+            self.assertFalse(board_says_stop(board))
+
+            apply_patch(
+                board,
+                {
+                    "current_step": "done",
+                    "completed_steps": [
+                        "understand task",
+                        "implement",
+                        "smoke-check",
+                        "done",
+                    ],
+                    "next_action": "STOP — no further tool calls",
+                },
+            )
+            self.assertTrue(board_says_stop(board))
+        finally:
+            config.WORKSPACE = old_workspace
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_refresh_skips_compress_when_stopped(self):
+        temp_dir = os.path.join(os.getcwd(), "workspace", "test-state-skip-compress")
+        old_workspace = config.WORKSPACE
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+            config.WORKSPACE = temp_dir
+            agent = Agent(
+                name="builder",
+                system_prompt="sys",
+                use_tools=False,
+                enable_memory=True,
+            )
+            state = agent._create_runtime_state("task")
+            seed_task_board(state.task_board, "task")
+            apply_patch(
+                state.task_board,
+                {
+                    "current_step": "done",
+                    "completed_steps": ["understand task", "implement", "smoke-check", "done"],
+                    "next_action": "STOP — no further tool calls",
+                },
+            )
+            trace = MagicMock(spec=TraceWriter)
+            called = {"n": 0}
+
+            import agents as agents_mod
+
+            original = agents_mod.llm_call_simple
+
+            def fake_llm(_msgs):
+                called["n"] += 1
+                return "{}"
+
+            agents_mod.llm_call_simple = fake_llm
+            try:
+                agent._refresh_state_memory(
+                    [{"role": "user", "content": "task"}],
+                    state,
+                    "task",
+                    iteration=3,
+                    trace=trace,
+                )
+            finally:
+                agents_mod.llm_call_simple = original
+
+            self.assertEqual(called["n"], 0)
+            self.assertTrue(board_says_stop(state.task_board))
+        finally:
+            config.WORKSPACE = old_workspace
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 class RecoveryWithoutUpdateProgressTests(unittest.TestCase):
     def test_rethink_blocks_until_requires_update_cleared(self):
@@ -245,7 +337,7 @@ class RecoveryWithoutUpdateProgressTests(unittest.TestCase):
         self.assertTrue(state.task_board.requires_update)
 
         blocked = hook.before_tool(
-            "run_bash",
+            "run_shell",
             {"command": "pwd"},
             messages=[],
             runtime_state=state,
@@ -258,7 +350,7 @@ class RecoveryWithoutUpdateProgressTests(unittest.TestCase):
         state.task_board.requires_update = False
         state.recovery.mode = "NORMAL"
         blocked = hook.before_tool(
-            "run_bash",
+            "run_shell",
             {"command": "pwd"},
             messages=[],
             runtime_state=state,

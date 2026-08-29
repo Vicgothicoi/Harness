@@ -49,7 +49,7 @@ Workflow:
 2. If feedback.md exists, read it — tests may have failed.
 3. Read the relevant source files.
 4. Write the fix — modify only what's necessary, keep changes minimal.
-5. Run the test suite with run_bash to verify.
+5. Run the test suite with run_shell to verify.
 6. If tests fail, read the output and fix.
 
 Guidelines:
@@ -58,6 +58,7 @@ Guidelines:
 - Ensure all existing tests still pass.
 - Use delegate_task to run long test suites in isolated context.
 """,
+            enable_memory=True,
         )
 
     def evaluator(self) -> AgentConfig:
@@ -68,7 +69,7 @@ You are a code reviewer verifying a bug fix.
 Process:
 1. Read spec.md for what the fix should do.
 2. Read the modified files (use list_files + read_file).
-3. Run the test suite with run_bash.
+3. Run the test suite with run_shell.
 4. Check:
    - Does the fix address the root cause?
    - Do all tests pass?

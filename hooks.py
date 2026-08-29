@@ -139,7 +139,7 @@ class LoopDetectionHook(AgentHook):
                 )
 
         # Track repeated commands (with fuzzy matching)
-        if tool_name == "run_bash":
+        if tool_name == "run_shell":
             cmd = tool_args.get("command", "").strip()
             self.recent_commands.append(cmd)
             if len(self.recent_commands) >= self.command_repeat_threshold:
@@ -207,8 +207,8 @@ class PreExitVerificationHook(AgentHook):
 
     @staticmethod
     def _has_done_work(messages: list[dict]) -> bool:
-        """Check if the agent has called any action tools (run_bash, write_file, delegate_task/delegate_tasks)."""
-        action_tools = {"run_bash", "write_file", "delegate_task", "delegate_tasks"}
+        """Check if the agent has called any action tools (run_shell, write_file, delegate_task/delegate_tasks)."""
+        action_tools = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
         for msg in messages:
             if msg.get("role") == "assistant":
                 for tc in msg.get("tool_calls", []):
@@ -244,7 +244,7 @@ class PreExitVerificationHook(AgentHook):
                 return (
                     "[SYSTEM] You have NOT completed the task. You have not executed any commands "
                     "or written any files yet.\n"
-                    "You MUST use run_bash to execute commands and write_file to create output files.\n"
+                    "You MUST use run_shell to execute commands and write_file to create output files.\n"
                     "Read the task requirements again and START WORKING. Do not just describe "
                     "what you would do — actually DO it using the available tools."
                 )
@@ -412,7 +412,7 @@ class RecoveryStrategyHook(AgentHook):
         "no module named",
         "modulenotfounderror",
     )
-    ACTION_TOOLS = {"run_bash", "write_file", "delegate_task", "delegate_tasks"}
+    ACTION_TOOLS = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
     READ_ONLY_PREFIXES = (
         "cat ",
         "ls",
@@ -434,6 +434,10 @@ class RecoveryStrategyHook(AgentHook):
         "env",
         "echo ",
         "printf ",
+        "dir",
+        "type ",
+        "findstr ",
+        "where ",
     )
     VERIFICATION_FAILURE_PATTERNS = (
         "assert",
@@ -547,7 +551,7 @@ class RecoveryStrategyHook(AgentHook):
         if mode == "SPEC_RECHECK":
             if tool_name in {"write_file", "delegate_task", "delegate_tasks"}:
                 return "[blocked] Recovery mode SPEC_RECHECK is read-only. Re-read the task and verification outputs first."
-            if tool_name == "run_bash" and not self._is_read_only_command(
+            if tool_name == "run_shell" and not self._is_read_only_command(
                 tool_args.get("command", "")
             ):
                 return "[blocked] Recovery mode SPEC_RECHECK only allows read-only verification commands."
@@ -595,7 +599,7 @@ class RecoveryStrategyHook(AgentHook):
         if runtime_state.recovery.mode != "NORMAL":
             runtime_state.recovery.tools_in_mode += 1
 
-        if tool_name == "run_bash":
+        if tool_name == "run_shell":
             command = tool_args.get("command", "")
             if (
                 runtime_state.recovery.mode == "ENV_FIX"
@@ -746,7 +750,7 @@ class ErrorGuidanceHook(AgentHook):
         runtime_state=None,
         agent_name: str | None = None,
     ) -> str | None:
-        if tool_name != "run_bash":
+        if tool_name != "run_shell":
             return None
 
         result_lower = result.lower()

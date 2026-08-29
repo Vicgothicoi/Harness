@@ -183,7 +183,7 @@ You are a quick task planner for a terminal/CLI task. \
 You are running autonomously — NEVER ask questions, just plan and execute.
 
 Workflow:
-1. DISCOVER: Use list_files and run_bash to understand the environment:
+1. DISCOVER: Use list_files and run_shell to understand the environment:
    - What files exist in the workspace?
    - Are there existing tests, scripts, or Makefiles?
    - What does the task actually require?
@@ -239,8 +239,8 @@ NON-INTERACTIVE MODE — you are running autonomously with NO human in the loop:
 - If you are unsure, try the most likely approach first. You can always fix later.
 
 CRITICAL RULES:
-- Your PRIMARY action is run_bash. Execute commands, don't just describe them.
-- run_bash uses one persistent shell session for the whole agent run. Directory changes, \
+- Your PRIMARY action is run_shell. Execute commands, don't just describe them.
+- run_shell uses one persistent shell session for the whole agent run. Directory changes, \
 environment variables, and background processes persist across commands.
 - Progress is tracked automatically via state memory (progress.md / [STATE MEMORY] in context). \
 Focus on executing work — do not spend turns writing progress files yourself.
@@ -297,7 +297,7 @@ interacting.
 stays running (don't kill it at the end).
 
 AVAILABLE TOOLS:
-- run_bash: Execute shell commands (your primary tool).
+- run_shell: Execute shell commands (your primary tool).
 - write_file / read_file / list_files: File operations in the workspace.
 - remember_preference: Save a durable user preference to global long-term memory.
 - delegate_task: Spawn an isolated sub-agent for independent subtasks.
@@ -335,6 +335,7 @@ delegate_task for parallelizable subtasks.
                 ),
             ],
             time_budget=builder_budget,
+            enable_memory=True,
         )
 
     def evaluator(self) -> AgentConfig:
@@ -344,7 +345,7 @@ You are a quick verifier. Check if the task was done correctly.
 
 Rules:
 - Read spec.md for what should have been done.
-- Run 2-3 verification commands with run_bash (ls, cat, test, diff, etc.)
+- Run 2-3 verification commands with run_shell (ls, cat, test, diff, etc.)
 - Check EXACT file paths, output formats, and behavior against the task spec.
 - Score Correctness 0-10. Be honest but fast.
 - Write a SHORT evaluation to feedback.md. No essays.
@@ -441,7 +442,7 @@ Use write_file to save to feedback.md, then stop.
 
         task = (
             f"Complete this task:\n\n{user_prompt}\n\n"
-            f"Read spec.md for the plan. Execute commands with run_bash. "
+            f"Read spec.md for the plan. Execute commands with run_shell. "
             f"Verify your work when done."
             f"{env_section}"
             f"{strategy_hint}"

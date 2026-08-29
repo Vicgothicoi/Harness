@@ -48,7 +48,10 @@ MAX_AGENT_ITERATIONS = 30
 MAX_TOOL_ERRORS = 3
 
 # --- Paths ---
-WORKSPACE = os.path.abspath("./workspace")
+WORKSPACE_ROOT = os.path.abspath("./workspace")
+LOG_ROOT = os.path.abspath("./logs")
+WORKSPACE = WORKSPACE_ROOT
+LOG = LOG_ROOT
 SPEC_FILE = "spec.md"
 FEEDBACK_FILE = "feedback.md"
 CONTRACT_FILE = "contract.md"

@@ -19,13 +19,28 @@ You maintain a structured task board for an autonomous coding agent.
 Extract the CURRENT task state from the conversation log below.
 Do NOT invent work that did not happen. Prefer concrete facts from tool results.
 
+Keep these four steps when possible:
+  understand task → implement → smoke-check → done
+Do not replace "smoke-check" with open-ended product QA. Browser QA and scoring
+belong to a later evaluator, not this agent.
+
 Return ONLY a JSON object (no markdown fences) with these keys:
   "goal": string
-  "steps": string[]           — ordered plan steps
+  "steps": string[]           — ordered plan steps (prefer the four steps above)
   "current_step": string      — must be one of steps when steps is non-empty
   "completed_steps": string[] — subset of steps
   "blockers": string[]
-  "next_action": string       — the single next concrete action
+  "next_action": string       — the single next concrete action, OR a STOP line
+
+Wrap-up rules:
+- If P0 deliverables exist on disk AND a smoke/syntax/build check succeeded
+  (and a git commit if one was made): mark understand/implement/smoke-check
+  complete, set current_step to "done", and set
+  next_action to exactly: STOP — no further tool calls
+- Do NOT invent extra work as next_action (patch scripts, headless test
+  harnesses, another round of the same check).
+- If deliverables are missing or smoke-check failed: next_action must be one
+  concrete action, not STOP.
 
 If the board is already accurate, still return a full JSON object reflecting it.
 """

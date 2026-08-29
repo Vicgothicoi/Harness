@@ -34,7 +34,7 @@ import config
 
 class ObservationCompressionTests(unittest.TestCase):
     def test_short_result_unchanged(self):
-        out = compress_observation("run_bash", {"command": "ls"}, "ok\n")
+        out = compress_observation("run_shell", {"command": "ls"}, "ok\n")
         self.assertEqual(out, "ok\n")
 
     def test_long_result_head_tail(self):
@@ -54,17 +54,17 @@ class TraceCompressionTests(unittest.TestCase):
         self.assertEqual(ok.detail, "a.py")
         self.assertEqual(ok.iteration, 2)
 
-        bad = record_from_tool("run_bash", {"command": "false"}, "[error] exit 1")
+        bad = record_from_tool("run_shell", {"command": "false"}, "[error] exit 1")
         self.assertFalse(bad.ok)
         self.assertIn("false", bad.detail)
 
     def test_format_trace_summary(self):
         buf = TraceBuffer()
-        buf.add(record_from_tool("run_bash", {"command": "pwd"}, "/tmp"))
+        buf.add(record_from_tool("run_shell", {"command": "pwd"}, "/tmp"))
         buf.add(record_from_tool("write_file", {"path": "x"}, "[error] fail"))
         text = format_trace_summary(buf.records)
         self.assertTrue(text.startswith(TRACE_MARKER))
-        self.assertIn("run_bash", text)
+        self.assertIn("run_shell", text)
         self.assertIn("FAIL", text)
 
     def test_compress_trace_replaces_middle_keeps_tool_pairs(self):
@@ -80,7 +80,7 @@ class TraceCompressionTests(unittest.TestCase):
                         {
                             "id": f"c{i}",
                             "type": "function",
-                            "function": {"name": "run_bash", "arguments": "{}"},
+                            "function": {"name": "run_shell", "arguments": "{}"},
                         }
                     ],
                 }
@@ -97,7 +97,7 @@ class TraceCompressionTests(unittest.TestCase):
                     {
                         "id": "recent",
                         "type": "function",
-                        "function": {"name": "run_bash", "arguments": "{}"},
+                        "function": {"name": "run_shell", "arguments": "{}"},
                     }
                 ],
             }
@@ -106,7 +106,7 @@ class TraceCompressionTests(unittest.TestCase):
 
         buf = TraceBuffer()
         for i in range(7):
-            buf.add(record_from_tool("run_bash", {"command": f"c{i}"}, "ok", iteration=i))
+            buf.add(record_from_tool("run_shell", {"command": f"c{i}"}, "ok", iteration=i))
 
         old_len = len(messages)
         # keep_recent small so middle is dropped
@@ -144,7 +144,7 @@ class TraceCompressionTests(unittest.TestCase):
         try:
             config.WORKSPACE = tmp
             buf = TraceBuffer()
-            buf.add(record_from_tool("run_bash", {"command": "ls"}, "ok", iteration=1))
+            buf.add(record_from_tool("run_shell", {"command": "ls"}, "ok", iteration=1))
             buf.add(record_from_tool("write_file", {"path": "a"}, "Wrote 1", iteration=2))
             self.assertEqual(len(buf.records), 2)
 

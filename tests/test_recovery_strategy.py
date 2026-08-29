@@ -25,8 +25,8 @@ class RecoveryStrategyTests(unittest.TestCase):
         state = AgentRuntimeState()
         hook = RecoveryStrategyHook()
 
-        hook.observe_tool_result("run_bash", {"command": "foo"}, "[error] command not found", state)
-        hook.observe_tool_result("run_bash", {"command": "foo"}, "[error] command not found", state)
+        hook.observe_tool_result("run_shell", {"command": "foo"}, "[error] command not found", state)
+        hook.observe_tool_result("run_shell", {"command": "foo"}, "[error] command not found", state)
 
         self.assertEqual(state.recovery.mode, "ENV_FIX")
 

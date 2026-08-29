@@ -6,6 +6,7 @@ Agents operate inside config.WORKSPACE to keep generated code isolated.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import config
@@ -40,7 +41,9 @@ def read_file(path: str) -> str:
         content = content[:limit] + (
             f"\n\n[TRUNCATED] You are seeing {limit} of {total} total characters. "
             f"The remaining {total - limit} characters are NOT shown above. "
-            f"You MUST use run_bash with head/tail/sed to read the rest if needed."
+            f"You MUST use run_shell with "
+            f"{'type/more' if os.name == 'nt' else 'head/tail/sed'} "
+            f"to read the rest if needed."
         )
     return content
 
@@ -88,16 +91,20 @@ def list_files(directory: str = ".") -> str:
     if not p.is_dir():
         return f"[error] Not a directory: {directory}"
     entries = []
+    ws = Path(config.WORKSPACE).resolve()
     for item in sorted(p.rglob("*")):
-        if item.is_file():
-            rel = item.relative_to(Path(config.WORKSPACE).resolve())
-            entries.append(str(rel))
+        if not item.is_file():
+            continue
+        rel = item.relative_to(ws)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        entries.append(str(rel))
     if not entries:
         return "(empty)"
     return "\n".join(entries[:200])
 
 
-def run_bash(
+def run_shell(
     command: str,
     timeout: int = 300,
     runtime_state=None,
@@ -105,7 +112,7 @@ def run_bash(
 ) -> str:
     """Run a shell command inside the agent's persistent shell session."""
     if runtime_state is None or runtime_state.shell_session is None:
-        return "[error] No active shell session for run_bash"
+        return "[error] No active shell session for run_shell"
     try:
         shell_result = runtime_state.shell_session.run(command, timeout=timeout)
         if shell_result.timed_out:
@@ -228,6 +235,7 @@ def delegate_task(task: str, role: str = "assistant") -> str:
             f"3. Any issues encountered"
         ),
         use_tools=True,
+        enable_memory=False,
     )
 
     result = sub.run(task)
@@ -292,6 +300,25 @@ def delegate_tasks(tasks: list[dict]) -> str:
         for i, r in enumerate(results)
     ]
     return "\n\n---\n\n".join(sections)
+
+
+def _run_shell_description() -> str:
+    if os.name == "nt":
+        return (
+            "Run a command in the persistent Windows cmd.exe session in the workspace "
+            "(cwd and environment are kept across calls). Use cmd syntax: dir, type, "
+            "findstr, cd, set. Chain commands with & (sequential in cmd). "
+            "Background: start /B. Do not use bash-only commands (ls, cat, pwd, &&, export). "
+            "For long-running work, increase timeout. Stderr is preserved separately."
+        )
+    return (
+        "Run a command in the persistent bash session in the workspace "
+        "(cwd and environment are kept across calls). Use for installing deps, "
+        "running builds, starting servers, running tests, etc. For long-running "
+        "commands (compilation, training), increase the timeout parameter. "
+        "For background services (VMs, servers), use '... &' and a separate command "
+        "to check readiness. Stderr is preserved separately for easier debugging."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,8 +426,8 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "run_bash",
-            "description": "Execute a shell command in the workspace directory. Use for installing deps, running builds, starting servers, running tests, etc. For long-running commands (compilation, training), increase the timeout parameter. For background services (VMs, servers), use '... &' and a separate command to check readiness. Stderr is preserved separately in output for easier debugging.",
+            "name": "run_shell",
+            "description": _run_shell_description(),
             "parameters": {
                 "type": "object",
                 "required": ["command"],
@@ -579,7 +606,7 @@ def _validate_and_fix(name: str, arguments: dict) -> tuple[dict, str | None]:
                     warning = f"[auto-fix] Converted absolute path '{path}' to relative '{arguments['path']}'"
                     break
 
-    elif name == "run_bash":
+    elif name == "run_shell":
         command = arguments.get("command", "")
 
         # Empty command
@@ -590,15 +617,14 @@ def _validate_and_fix(name: str, arguments: dict) -> tuple[dict, str | None]:
             )
 
         # Detect interactive commands that will hang
-        import re
-
         interactive_cmds = ["vim", "nano", "vi", "less", "more", "top", "htop"]
         first_word = command.strip().split()[0] if command.strip() else ""
         if first_word in interactive_cmds:
+            viewer = "type" if os.name == "nt" else "cat/head/tail"
             return arguments, (
                 f"[auto-fix] '{first_word}' is an interactive command that will hang. "
                 f"Use non-interactive alternatives: "
-                f"for editing use write_file, for viewing use cat/head/tail."
+                f"for editing use write_file, for viewing use {viewer}."
             )
 
     elif name == "list_files":
@@ -711,7 +737,7 @@ TOOL_DISPATCH = {
     "write_file": write_file,
     "remember_preference": remember_preference,
     "list_files": list_files,
-    "run_bash": run_bash,
+    "run_shell": run_shell,
     "delegate_task": delegate_task,
     "delegate_tasks": delegate_tasks,
     "web_search": web_search,
@@ -737,7 +763,7 @@ def execute_tool(
         return fix_warning
 
     try:
-        if name == "run_bash":
+        if name == "run_shell":
             result = fn(**arguments, runtime_state=runtime_state, agent_name=agent_name)
         else:
             result = fn(**arguments)

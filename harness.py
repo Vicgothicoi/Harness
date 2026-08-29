@@ -63,6 +63,7 @@ class Harness:
             use_tools=True, extra_tool_schemas=planner_cfg.extra_tool_schemas,
             hooks=planner_cfg.hooks, time_budget=planner_cfg.time_budget,
             mcp_bridges=planner_cfg.mcp_bridges,
+            enable_memory=planner_cfg.enable_memory,
         ) if planner_cfg.enabled else None
 
         self.builder = Agent(
@@ -70,6 +71,7 @@ class Harness:
             use_tools=True, extra_tool_schemas=builder_cfg.extra_tool_schemas,
             hooks=builder_cfg.hooks, time_budget=builder_cfg.time_budget,
             mcp_bridges=builder_cfg.mcp_bridges,
+            enable_memory=builder_cfg.enable_memory,
         )
 
         self.evaluator = Agent(
@@ -77,18 +79,21 @@ class Harness:
             use_tools=True, extra_tool_schemas=evaluator_cfg.extra_tool_schemas,
             hooks=evaluator_cfg.hooks, time_budget=evaluator_cfg.time_budget,
             mcp_bridges=evaluator_cfg.mcp_bridges,
+            enable_memory=evaluator_cfg.enable_memory,
         ) if evaluator_cfg.enabled else None
 
         self.contract_proposer = Agent(
             "contract_proposer", proposer_cfg.system_prompt, use_tools=True,
             hooks=proposer_cfg.hooks,
             mcp_bridges=proposer_cfg.mcp_bridges,
+            enable_memory=proposer_cfg.enable_memory,
         ) if proposer_cfg.enabled else None
 
         self.contract_reviewer = Agent(
             "contract_reviewer", reviewer_cfg.system_prompt, use_tools=True,
             hooks=reviewer_cfg.hooks,
             mcp_bridges=reviewer_cfg.mcp_bridges,
+            enable_memory=reviewer_cfg.enable_memory,
         ) if reviewer_cfg.enabled else None
 
     def run(self, user_prompt: str) -> None:
@@ -96,20 +101,25 @@ class Harness:
         # (skip if HARNESS_FLAT_WORKSPACE is set — used for benchmarks
         #  where outputs must land directly in the workspace root)
         if os.environ.get("HARNESS_FLAT_WORKSPACE"):
-            Path(config.WORKSPACE).mkdir(parents=True, exist_ok=True)
+            Path(config.WORKSPACE_ROOT).mkdir(parents=True, exist_ok=True)
+            project_name = Path(config.WORKSPACE_ROOT).name or "flat"
         else:
             from datetime import datetime
-            # slug = re.sub(r'[^a-z0-9]+', '-', user_prompt.lower().strip())[:40].strip('-')
             slug = re.sub(r'[\\/:*?"<>|]', "_", user_prompt).strip()[:20]
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             project_name = f"{timestamp}_{slug}"
-            project_dir = os.path.join(config.WORKSPACE, project_name)
-
-            config.WORKSPACE = os.path.abspath(project_dir)
+            project_name = "Test"
+            config.WORKSPACE = os.path.abspath(
+                os.path.join(config.WORKSPACE_ROOT, project_name)
+            )
             Path(config.WORKSPACE).mkdir(parents=True, exist_ok=True)
+
+        config.LOG = os.path.abspath(os.path.join(config.LOG_ROOT, project_name))
+        Path(config.LOG).mkdir(parents=True, exist_ok=True)
 
         log.info(f"Profile: {self.profile.name()}")
         log.info(f"Project directory: {config.WORKSPACE}")
+        log.info(f"Run logs: {config.LOG}")
 
         # Initialize git
         git_dir = Path(config.WORKSPACE) / ".git"
@@ -131,30 +141,28 @@ class Harness:
                  f"evaluator={'skip' if skip_evaluator else 'on'})")
 
         # ---- Phase 1: Planning ----
-        if self.planner and not skip_planner:
-            log.info("=" * 60)
-            log.info("PHASE 1: PLANNING")
-            log.info("=" * 60)
-            phase_start = time.time()
+        # if self.planner and not skip_planner:
+        #     log.info("=" * 60)
+        #     log.info("PHASE 1: PLANNING")
+        #     log.info("=" * 60)
+        #     phase_start = time.time()
 
-            self.planner.run(
-                f"Create a plan for the following task:\n\n"
-                f"{user_prompt}\n\n"
-                f"Save the plan to spec.md."
-            )
+        #     self.planner.run(
+        #         f"Create a plan for the following task:\n\n"
+        #         f"{user_prompt}\n\n"
+        #         f"Save the plan to spec.md."
+        #     )
 
-            log.info(f"Planning completed in {time.time() - phase_start:.0f}s")
-        else:
-            # No planner — write prompt directly as spec
-            spec_path = Path(config.WORKSPACE) / config.SPEC_FILE
-            spec_path.write_text(f"# Task\n\n{user_prompt}\n", encoding="utf-8")
-            log.info("No planner — wrote prompt directly to spec.md")
+        #     log.info(f"Planning completed in {time.time() - phase_start:.0f}s")
+        # else:
+        #     # No planner — write prompt directly as spec
+        #     spec_path = Path(config.WORKSPACE) / config.SPEC_FILE
+        #     spec_path.write_text(f"# Task\n\n{user_prompt}\n", encoding="utf-8")
+        #     log.info("No planner — wrote prompt directly to spec.md")
 
-        # Seed project memory for this workspace (updated again after each build)
-        seed_project_memory(user_prompt)
-        log.info(f"Project memory seeded at {config.PROJECT_MEMORY_FILE}")
-
-
+        # # Seed project memory for this workspace (updated again after each build)
+        # seed_project_memory(user_prompt)
+        # log.info(f"Project memory seeded at {config.PROJECT_MEMORY_FILE}")
 
         # ---- Phase 2: Build → Evaluate loop ----
         score_history: list[float] = []
@@ -260,6 +268,7 @@ class Harness:
         log.info("=" * 60)
         log.info(f"HARNESS COMPLETE — total time: {total_duration / 60:.1f} minutes")
         log.info(f"Output in: {config.WORKSPACE}")
+        log.info(f"Logs in: {config.LOG}")
         log.info("=" * 60)
 
     def _negotiate_contract(self, round_num: int, max_iterations: int = 3) -> None:
@@ -359,7 +368,7 @@ def main():
     log.info(f"Profile: {profile_name}")
     log.info(f"Model: {config.MODEL}")
     log.info(f"Base URL: {config.BASE_URL}")
-    log.info(f"Workspace: {config.WORKSPACE}")
+    log.info(f"Workspace root: {config.WORKSPACE_ROOT}")
 
     # Preflight — verify API connection with retries for rate limits
     # Skip in benchmark mode (HARNESS_FLAT_WORKSPACE) to avoid wasting an API

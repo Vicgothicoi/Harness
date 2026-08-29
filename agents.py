@@ -20,7 +20,12 @@ from memory.working_memory import (
     build_working_memory,
     build_working_memory_from_runtime,
 )
-from memory.state_memory import TaskBoard, persist_task_board, seed_task_board
+from memory.state_memory import (
+    TaskBoard,
+    board_says_stop,
+    persist_task_board,
+    seed_task_board,
+)
 from compression.observation import compress_observation
 from compression.trace import TraceBuffer, compress_trace, record_from_tool
 from compression.state import compress_state
@@ -29,7 +34,7 @@ from shell_session import PersistentShellSession
 
 log = logging.getLogger("harness")
 
-ACTION_TOOLS = {"run_bash", "write_file", "delegate_task", "delegate_tasks"}
+ACTION_TOOLS = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
 
 
 def _reinject_memory_blocks(
@@ -49,25 +54,18 @@ def _truncate(s: str, n: int) -> str:
 
 
 class TraceWriter:
-    """Appends structured events to a JSONL trace file in the workspace.
+    """Appends structured events to a JSONL trace file outside the agent workspace.
 
     Each line is a JSON object with: timestamp, agent, event_type, and data.
-    Trace file: {WORKSPACE}/_trace_{agent_name}.jsonl
+    Trace file: {LOG}/_trace_{agent_name}.jsonl
     """
 
     def __init__(self, agent_name: str):
         self.agent_name = agent_name
         self._start_time = time.time()
-        # Write trace to workspace first; fall back to harness-agent dir
-        trace_dir = Path(config.WORKSPACE)
-        try:
-            trace_dir.mkdir(parents=True, exist_ok=True)
-            test_file = trace_dir / f"_trace_test_{agent_name}"
-            test_file.write_text("test")
-            test_file.unlink()
-            self._path = trace_dir / f"_trace_{agent_name}.jsonl"
-        except Exception:
-            self._path = Path(__file__).parent / f"_trace_{agent_name}.jsonl"
+        trace_dir = Path(config.LOG)
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        self._path = trace_dir / f"_trace_{agent_name}.jsonl"
 
     def _write(self, event_type: str, data: dict):
         try:
@@ -131,6 +129,21 @@ class TraceWriter:
     def finish(self, reason: str, iterations: int):
         self._write("finish", {"reason": reason, "iterations": iterations})
 
+    def dump_messages(self, iteration: int, messages: list[dict], tokens: int):
+        """Append one LLM-request context snapshot (JSONL, not truncated)."""
+        try:
+            path = Path(config.LOG) / f"_messages_{self.agent_name}.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "iteration": iteration,
+                "tokens": tokens,
+                "messages": messages,
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # LLM client (singleton)
@@ -190,6 +203,7 @@ class AgentRuntimeState:
     recovery: RecoveryState = field(default_factory=RecoveryState)
     trace_buffer: TraceBuffer = field(default_factory=TraceBuffer)
     action_tool_count: int = 0
+    stop_signaled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +236,7 @@ class Agent:
         extra_tool_schemas: list[dict] | None = None,
         hooks: list | None = None,
         mcp_bridges: list | None = None,
+        enable_memory: bool = False,
     ):
         self.name = name
         self.system_prompt = system_prompt
@@ -230,6 +245,7 @@ class Agent:
         self.hooks = hooks or []
         self.time_budget = time_budget
         self.mcp_bridges = mcp_bridges or []  # list[McpBridge]
+        self.enable_memory = enable_memory
         self._mcp_schemas: list[dict] = []
 
     def _connect_mcp_bridges(self) -> None:
@@ -285,6 +301,9 @@ class Agent:
         if iteration <= 1 or board.update_count == 0:
             seed_task_board(board, task)
             trace.context_event("state_seed", f"goal={board.goal[:80]}")
+        elif board_says_stop(board):
+            persist_task_board(board)
+            trace.context_event("state_stop_skip_compress", board.next_action[:80])
         else:
             patch = compress_state(messages, board, llm_call_simple)
             if patch is None:
@@ -320,7 +339,8 @@ class Agent:
         or we hit the iteration limit.
 
         Returns the final assistant text response.
-        Writes a JSONL trace file to {WORKSPACE}/_trace_{name}.jsonl
+        Writes a JSONL trace file to {LOG}/_trace_{name}.jsonl.
+        Memory/compression layers run only when enable_memory is True (builder).
         """
         trace = TraceWriter(self.name)
         runtime_state = self._create_runtime_state(task)
@@ -338,10 +358,27 @@ class Agent:
 
         try:
             for iteration in range(1, config.MAX_AGENT_ITERATIONS + 1):
-                # --- State memory ---
-                messages = self._refresh_state_memory(
-                    messages, runtime_state, task, iteration, trace
-                )
+                stopped = False
+                if self.enable_memory:
+                    messages = self._refresh_state_memory(
+                        messages, runtime_state, task, iteration, trace
+                    )
+                    stopped = board_says_stop(runtime_state.task_board)
+                    if stopped and not runtime_state.stop_signaled:
+                        runtime_state.stop_signaled = True
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM] Task board next_action is STOP. "
+                                    "Do not call any tools. Give a brief summary and finish."
+                                ),
+                            }
+                        )
+                        trace.context_event(
+                            "state_stop", runtime_state.task_board.next_action[:80]
+                        )
+                        log.info(f"[{self.name}] Task board says STOP — wrapping up.")
 
                 # --- Hooks: per-iteration ---
                 for hook in self.hooks:
@@ -360,8 +397,10 @@ class Agent:
                 log.info(f"[{self.name}] iteration={iteration}  tokens≈{token_count}")
                 trace.iteration(iteration, token_count)
 
-                if token_count > config.RESET_THRESHOLD or context.detect_anxiety(
-                    messages
+                if self.enable_memory and (
+                    token_count > config.RESET_THRESHOLD or context.detect_anxiety(
+                        messages
+                    )
                 ):
                     reason = (
                         "anxiety detected"
@@ -380,7 +419,7 @@ class Agent:
                         trace_buffer=runtime_state.trace_buffer,
                     )
                     messages = _reinject_memory_blocks(messages, runtime_state)
-                elif token_count > config.COMPRESS_THRESHOLD:
+                elif self.enable_memory and token_count > config.COMPRESS_THRESHOLD:
                     log.info(
                         f"[{self.name}] Trace-compressing context (role={self.name})..."
                     )
@@ -398,13 +437,12 @@ class Agent:
                     kwargs["tools"] = (
                         tools.TOOL_SCHEMAS + self.extra_tool_schemas + self._mcp_schemas
                     )
-                    kwargs["tool_choice"] = "auto"
+                    kwargs["tool_choice"] = "none" if stopped else "auto"
 
-                file_path = Path(config.WORKSPACE) / "messages.txt"
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                messages_str = json.dumps(messages, ensure_ascii=False, indent=2)
-                with open(file_path, 'a', encoding='utf-8') as f:
-                    f.write(messages_str + '\n\n\n')
+                try:
+                    trace.dump_messages(iteration, messages, token_count)
+                except Exception:
+                    pass
 
                 try:
                     response = client.chat.completions.create(**kwargs)
@@ -479,8 +517,19 @@ class Agent:
                     last_text = msg.content
                     log.info(f"[{self.name}] assistant: {msg.content[:200]}...")
 
+                if stopped and msg.tool_calls:
+                    log.info(
+                        f"[{self.name}] Ignoring tool calls because task board says STOP."
+                    )
+                    trace.finish("state_stop", iteration)
+                    break
+
                 # --- Hooks: pre-exit ---
                 if not msg.tool_calls:
+                    if stopped:
+                        log.info(f"[{self.name}] Finished (task board STOP).")
+                        trace.finish("state_stop", iteration)
+                        break
                     forced_continue = False
                     for hook in self.hooks:
                         inject = hook.pre_exit(
@@ -543,7 +592,7 @@ class Agent:
                     if blocked:
                         continue
 
-                    if fn_name == "run_bash" and runtime_state.shell_session is None:
+                    if fn_name == "run_shell" and runtime_state.shell_session is None:
                         runtime_state.shell_session = PersistentShellSession(
                             config.WORKSPACE
                         )
@@ -555,11 +604,13 @@ class Agent:
                     log.debug(f"[{self.name}] tool result: {_truncate(result, 200)}")
                     trace.tool_call(fn_name, fn_args, result)
 
-                    # --- observation compression ---
-                    runtime_state.trace_buffer.add(
-                        record_from_tool(fn_name, fn_args, result, iteration=iteration)
-                    )
-                    result = compress_observation(fn_name, fn_args, result)
+                    if self.enable_memory:
+                        runtime_state.trace_buffer.add(
+                            record_from_tool(
+                                fn_name, fn_args, result, iteration=iteration
+                            )
+                        )
+                        result = compress_observation(fn_name, fn_args, result)
 
                     messages.append(
                         {

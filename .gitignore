@@ -1,6 +1,7 @@
 .env
 __pycache__/
 workspace/
+logs/
 *.pyc
 .DS_Store
 jobs/

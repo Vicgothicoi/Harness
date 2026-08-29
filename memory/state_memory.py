@@ -168,6 +168,15 @@ def inject_state_summary(messages: list[dict], board: TaskBoard, max_chars: int 
     return [state_msg] + cleaned
 
 
+def board_says_stop(board: TaskBoard) -> bool:
+    """True when state compression decided the agent should stop calling tools."""
+    action = (board.next_action or "").strip()
+    if action.upper().startswith("STOP"):
+        return True
+    completed = set(board.completed_steps or [])
+    return board.current_step == "done" and "done" in completed
+
+
 def seed_task_board(board: TaskBoard, task: str) -> None:
     """Initialize TaskBoard from the raw task string without an LLM call."""
     goal = (task or "").strip()
@@ -177,7 +186,8 @@ def seed_task_board(board: TaskBoard, task: str) -> None:
         board,
         {
             "goal": goal or board.goal or "complete the assigned task",
-            "steps": board.steps or ["understand task", "implement", "verify"],
+            "steps": board.steps
+            or ["understand task", "implement", "smoke-check", "done"],
             "current_step": board.current_step or "understand task",
             "completed_steps": board.completed_steps or [],
             "blockers": board.blockers or [],

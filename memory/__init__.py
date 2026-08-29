@@ -20,6 +20,7 @@ from memory.state_memory import (
     inject_state_summary,
     persist_task_board,
     seed_task_board,
+    board_says_stop,
     to_context_block,
     to_markdown,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "inject_long_term_preferences",
     "persist_task_board",
     "seed_task_board",
+    "board_says_stop",
     "to_context_block",
     "to_markdown",
     "seed_project_memory",

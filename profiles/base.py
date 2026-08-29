@@ -39,6 +39,9 @@ class AgentConfig:
     # call_tool / close / has_tool. Empty by default — only roles that need
     # external MCP tools (e.g. app-builder evaluator) populate this list.
     mcp_bridges: list = field(default_factory=list)
+    # Four-layer memory + compression in Agent.run. Only the main builder
+    # should enable this; planner, evaluator, and delegate sub-agents stay off.
+    enable_memory: bool = False
 
 
 @dataclass

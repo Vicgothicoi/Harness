@@ -6,7 +6,7 @@ Harbor has two agent types:
   - Installed (BaseInstalledAgent): agent is installed inside the container
 
 We use Installed agent — our harness.py runs natively inside the container,
-so run_bash just works as subprocess without any bridging.
+so run_shell just works as subprocess without any bridging.
 
 Usage:
   # Install harbor

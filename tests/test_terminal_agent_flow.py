@@ -38,6 +38,19 @@ class AgentRuntimeStateTests(unittest.TestCase):
         self.assertNotIn("update_progress", prompt)
         self.assertIn("recovery mode", prompt.lower())
 
+    def test_only_builder_enables_memory(self):
+        from profiles.app_builder import AppBuilderProfile
+
+        terminal = TerminalProfile()
+        self.assertFalse(terminal.planner().enable_memory)
+        self.assertTrue(terminal.builder().enable_memory)
+        self.assertFalse(terminal.evaluator().enable_memory)
+
+        app = AppBuilderProfile()
+        self.assertFalse(app.planner().enable_memory)
+        self.assertTrue(app.builder().enable_memory)
+        self.assertFalse(app.evaluator().enable_memory)
+
     def test_terminal_builder_uses_recovery_hook_without_enforcement(self):
         hooks = TerminalProfile().builder().hooks
 

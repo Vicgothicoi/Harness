@@ -47,8 +47,7 @@ _session = BrowserSession()
 
 
 def _cleanup() -> None:
-    _session.close()
-    _session.stop_dev_server()
+    _session.shutdown()
 
 
 atexit.register(_cleanup)

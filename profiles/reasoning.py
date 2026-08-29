@@ -46,7 +46,7 @@ Workflow:
 1. Read spec.md for the approach.
 2. If feedback.md exists, read it — your previous answer may have errors.
 3. Work through each step:
-   - For calculations, use run_bash with Python: python3 -c "..."
+   - For calculations, use run_shell with Python: python3 -c "..."
    - For research, reason from your knowledge.
    - Show all work explicitly.
 4. Write your complete solution and final answer to answer.md.
@@ -54,6 +54,7 @@ Workflow:
 Use write_file to save your solution to answer.md.
 The final answer must be clearly marked: **ANSWER: [your answer]**
 """,
+            enable_memory=True,
         )
 
     def evaluator(self) -> AgentConfig:
@@ -65,7 +66,7 @@ Process:
 1. Read spec.md for the problem breakdown.
 2. Read answer.md for the submitted solution.
 3. Verify each step independently:
-   - Re-do key calculations with run_bash: python3 -c "..."
+   - Re-do key calculations with run_shell: python3 -c "..."
    - Check logical reasoning for gaps.
    - Verify the final answer.
 4. Score:
