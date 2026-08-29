@@ -21,6 +21,7 @@ Usage:
   python harness.py --profile reasoning "Calculate the orbital period of..."
   python harness.py --list-profiles
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,43 +59,72 @@ class Harness:
         proposer_cfg = profile.contract_proposer()
         reviewer_cfg = profile.contract_reviewer()
 
-        self.planner = Agent(
-            "planner", planner_cfg.system_prompt + skill_catalog,
-            use_tools=True, extra_tool_schemas=planner_cfg.extra_tool_schemas,
-            hooks=planner_cfg.hooks, time_budget=planner_cfg.time_budget,
-            mcp_bridges=planner_cfg.mcp_bridges,
-            enable_memory=planner_cfg.enable_memory,
-        ) if planner_cfg.enabled else None
+        self.planner = (
+            Agent(
+                "planner",
+                planner_cfg.system_prompt + skill_catalog,
+                use_tools=True,
+                extra_tool_schemas=planner_cfg.extra_tool_schemas,
+                hooks=planner_cfg.hooks,
+                time_budget=planner_cfg.time_budget,
+                mcp_bridges=planner_cfg.mcp_bridges,
+                enable_memory=planner_cfg.enable_memory,
+            )
+            if planner_cfg.enabled
+            else None
+        )
 
         self.builder = Agent(
-            "builder", builder_cfg.system_prompt + skill_catalog,
-            use_tools=True, extra_tool_schemas=builder_cfg.extra_tool_schemas,
-            hooks=builder_cfg.hooks, time_budget=builder_cfg.time_budget,
+            "builder",
+            builder_cfg.system_prompt + skill_catalog,
+            use_tools=True,
+            extra_tool_schemas=builder_cfg.extra_tool_schemas,
+            hooks=builder_cfg.hooks,
+            time_budget=builder_cfg.time_budget,
             mcp_bridges=builder_cfg.mcp_bridges,
             enable_memory=builder_cfg.enable_memory,
         )
 
-        self.evaluator = Agent(
-            "evaluator", evaluator_cfg.system_prompt,
-            use_tools=True, extra_tool_schemas=evaluator_cfg.extra_tool_schemas,
-            hooks=evaluator_cfg.hooks, time_budget=evaluator_cfg.time_budget,
-            mcp_bridges=evaluator_cfg.mcp_bridges,
-            enable_memory=evaluator_cfg.enable_memory,
-        ) if evaluator_cfg.enabled else None
+        self.evaluator = (
+            Agent(
+                "evaluator",
+                evaluator_cfg.system_prompt,
+                use_tools=True,
+                extra_tool_schemas=evaluator_cfg.extra_tool_schemas,
+                hooks=evaluator_cfg.hooks,
+                time_budget=evaluator_cfg.time_budget,
+                mcp_bridges=evaluator_cfg.mcp_bridges,
+                enable_memory=evaluator_cfg.enable_memory,
+            )
+            if evaluator_cfg.enabled
+            else None
+        )
 
-        self.contract_proposer = Agent(
-            "contract_proposer", proposer_cfg.system_prompt, use_tools=True,
-            hooks=proposer_cfg.hooks,
-            mcp_bridges=proposer_cfg.mcp_bridges,
-            enable_memory=proposer_cfg.enable_memory,
-        ) if proposer_cfg.enabled else None
+        self.contract_proposer = (
+            Agent(
+                "contract_proposer",
+                proposer_cfg.system_prompt,
+                use_tools=True,
+                hooks=proposer_cfg.hooks,
+                mcp_bridges=proposer_cfg.mcp_bridges,
+                enable_memory=proposer_cfg.enable_memory,
+            )
+            if proposer_cfg.enabled
+            else None
+        )
 
-        self.contract_reviewer = Agent(
-            "contract_reviewer", reviewer_cfg.system_prompt, use_tools=True,
-            hooks=reviewer_cfg.hooks,
-            mcp_bridges=reviewer_cfg.mcp_bridges,
-            enable_memory=reviewer_cfg.enable_memory,
-        ) if reviewer_cfg.enabled else None
+        self.contract_reviewer = (
+            Agent(
+                "contract_reviewer",
+                reviewer_cfg.system_prompt,
+                use_tools=True,
+                hooks=reviewer_cfg.hooks,
+                mcp_bridges=reviewer_cfg.mcp_bridges,
+                enable_memory=reviewer_cfg.enable_memory,
+            )
+            if reviewer_cfg.enabled
+            else None
+        )
 
     def run(self, user_prompt: str) -> None:
         # Create a unique project subdirectory under workspace
@@ -105,10 +135,11 @@ class Harness:
             project_name = Path(config.WORKSPACE_ROOT).name or "flat"
         else:
             from datetime import datetime
+
             slug = re.sub(r'[\\/:*?"<>|]', "_", user_prompt).strip()[:20]
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             project_name = f"{timestamp}_{slug}"
-            project_name = "Test"
+            # project_name = "Test"
             config.WORKSPACE = os.path.abspath(
                 os.path.join(config.WORKSPACE_ROOT, project_name)
             )
@@ -124,7 +155,9 @@ class Harness:
         # Initialize git
         git_dir = Path(config.WORKSPACE) / ".git"
         if not git_dir.exists():
-            os.system(f"cd {config.WORKSPACE} && git init && git add -A 2>/dev/null; git commit -m 'init' --allow-empty 2>/dev/null")
+            os.system(
+                f"cd {config.WORKSPACE} && git init && git add -A 2>/dev/null; git commit -m 'init' --allow-empty 2>/dev/null"
+            )
 
         total_start = time.time()
         max_rounds = self.profile.max_rounds() or config.MAX_HARNESS_ROUNDS
@@ -134,35 +167,37 @@ class Harness:
         allocation = self.profile.resolve_time_allocation(user_prompt)
         skip_planner = not allocation.get("planner_enabled", True)
         skip_evaluator = not allocation.get("evaluator_enabled", True)
-        log.info(f"Time allocation: planner={allocation['planner']:.0%} "
-                 f"builder={allocation['builder']:.0%} "
-                 f"evaluator={allocation['evaluator']:.0%} "
-                 f"(planner={'skip' if skip_planner else 'on'}, "
-                 f"evaluator={'skip' if skip_evaluator else 'on'})")
+        log.info(
+            f"Time allocation: planner={allocation['planner']:.0%} "
+            f"builder={allocation['builder']:.0%} "
+            f"evaluator={allocation['evaluator']:.0%} "
+            f"(planner={'skip' if skip_planner else 'on'}, "
+            f"evaluator={'skip' if skip_evaluator else 'on'})"
+        )
 
         # ---- Phase 1: Planning ----
-        # if self.planner and not skip_planner:
-        #     log.info("=" * 60)
-        #     log.info("PHASE 1: PLANNING")
-        #     log.info("=" * 60)
-        #     phase_start = time.time()
+        if self.planner and not skip_planner:
+            log.info("=" * 60)
+            log.info("PHASE 1: PLANNING")
+            log.info("=" * 60)
+            phase_start = time.time()
 
-        #     self.planner.run(
-        #         f"Create a plan for the following task:\n\n"
-        #         f"{user_prompt}\n\n"
-        #         f"Save the plan to spec.md."
-        #     )
+            self.planner.run(
+                f"Create a plan for the following task:\n\n"
+                f"{user_prompt}\n\n"
+                f"Save the plan to spec.md."
+            )
 
-        #     log.info(f"Planning completed in {time.time() - phase_start:.0f}s")
-        # else:
-        #     # No planner — write prompt directly as spec
-        #     spec_path = Path(config.WORKSPACE) / config.SPEC_FILE
-        #     spec_path.write_text(f"# Task\n\n{user_prompt}\n", encoding="utf-8")
-        #     log.info("No planner — wrote prompt directly to spec.md")
+            log.info(f"Planning completed in {time.time() - phase_start:.0f}s")
+        else:
+            # No planner — write prompt directly as spec
+            spec_path = Path(config.WORKSPACE) / config.SPEC_FILE
+            spec_path.write_text(f"# Task\n\n{user_prompt}\n", encoding="utf-8")
+            log.info("No planner — wrote prompt directly to spec.md")
 
-        # # Seed project memory for this workspace (updated again after each build)
-        # seed_project_memory(user_prompt)
-        # log.info(f"Project memory seeded at {config.PROJECT_MEMORY_FILE}")
+        # Seed project memory for this workspace (updated again after each build)
+        seed_project_memory(user_prompt)
+        log.info(f"Project memory seeded at {config.PROJECT_MEMORY_FILE}")
 
         # ---- Phase 2: Build → Evaluate loop ----
         score_history: list[float] = []
@@ -177,7 +212,9 @@ class Harness:
                 log.info("=" * 60)
                 contract_start = time.time()
                 self._negotiate_contract(round_num)
-                log.info(f"Contract negotiation completed in {time.time() - contract_start:.0f}s")
+                log.info(
+                    f"Contract negotiation completed in {time.time() - contract_start:.0f}s"
+                )
 
             # ---- Build ----
             log.info("=" * 60)
@@ -187,6 +224,7 @@ class Harness:
 
             # Sync time budget to harness start so builder knows total elapsed time
             from hooks import TimeBudgetHook
+
             for hook in self.builder.hooks:
                 if isinstance(hook, TimeBudgetHook):
                     hook.sync_start_time(total_start)
@@ -194,17 +232,28 @@ class Harness:
                     task_timeout = self.profile.resolve_task_timeout(user_prompt)
                     if task_timeout:
                         hook.budget_seconds = task_timeout
-                        log.info(f"Time budget set to {task_timeout}s from task metadata")
+                        log.info(
+                            f"Time budget set to {task_timeout}s from task metadata"
+                        )
 
             feedback_path = Path(config.WORKSPACE) / config.FEEDBACK_FILE
-            prev_feedback = feedback_path.read_text(encoding="utf-8") if feedback_path.exists() else ""
+            prev_feedback = (
+                feedback_path.read_text(encoding="utf-8")
+                if feedback_path.exists()
+                else ""
+            )
 
             build_task = self.profile.format_build_task(
-                user_prompt, round_num, prev_feedback, score_history,
+                user_prompt,
+                round_num,
+                prev_feedback,
+                score_history,
             )
 
             self.builder.run(build_task)
-            log.info(f"Build round {round_num} completed in {time.time() - build_start:.0f}s")
+            log.info(
+                f"Build round {round_num} completed in {time.time() - build_start:.0f}s"
+            )
 
             # ---- Evaluate (if enabled) ----
             round_score: float | None = None
@@ -221,7 +270,9 @@ class Harness:
                     f"Score each criterion honestly. Write your evaluation to feedback.md."
                 )
 
-                log.info(f"Evaluation round {round_num} completed in {time.time() - eval_start:.0f}s")
+                log.info(
+                    f"Evaluation round {round_num} completed in {time.time() - eval_start:.0f}s"
+                )
 
                 # Check score
                 feedback_text = ""
@@ -229,7 +280,9 @@ class Harness:
                     feedback_text = feedback_path.read_text(encoding="utf-8")
                 round_score = self.profile.extract_score(feedback_text)
                 score_history.append(round_score)
-                log.info(f"Round {round_num} average score: {round_score:.1f} / 10  (threshold: {threshold})")
+                log.info(
+                    f"Round {round_num} average score: {round_score:.1f} / 10  (threshold: {threshold})"
+                )
                 log.info(f"Score history: {score_history}")
 
                 if round_score >= threshold:
@@ -306,15 +359,19 @@ class Harness:
                     f"The reviewer requested changes. Read contract.md and revise."
                 )
 
-        log.warning("[contract] Max iterations reached, proceeding with current contract.")
+        log.warning(
+            "[contract] Max iterations reached, proceeding with current contract."
+        )
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     from logger import setup_logging
+
     setup_logging(verbose="--verbose" in sys.argv or "-v" in sys.argv)
 
     # Parse flags
@@ -333,7 +390,7 @@ def main():
         idx = args.index("--profile")
         if idx + 1 < len(args):
             profile_name = args[idx + 1]
-            args = args[:idx] + args[idx + 2:]
+            args = args[:idx] + args[idx + 2 :]
         else:
             print("Error: --profile requires a name")
             sys.exit(1)
@@ -343,7 +400,7 @@ def main():
         sys.exit(1)
 
     if len(args) < 1:
-        print("Usage: python harness.py [--profile <name>] \"<task>\" [--verbose]")
+        print('Usage: python harness.py [--profile <name>] "<task>" [--verbose]')
         print()
         print("Profiles:")
         for p in list_profiles():
@@ -351,9 +408,15 @@ def main():
         print()
         print("Examples:")
         print('  python harness.py "Build a DAW in the browser"')
-        print('  python harness.py --profile terminal "Fix the broken symlinks in /tmp"')
-        print('  python harness.py --profile swe-bench "Fix the TypeError in parse_config()"')
-        print('  python harness.py --profile reasoning "What is the escape velocity of Mars?"')
+        print(
+            '  python harness.py --profile terminal "Fix the broken symlinks in /tmp"'
+        )
+        print(
+            '  python harness.py --profile swe-bench "Fix the TypeError in parse_config()"'
+        )
+        print(
+            '  python harness.py --profile reasoning "What is the escape velocity of Mars?"'
+        )
         sys.exit(1)
 
     user_prompt = " ".join(args)
@@ -380,6 +443,7 @@ def main():
         log.info("Verifying API connection...")
         from agents import get_client
         import random
+
         preflight_ok = False
         for attempt in range(8):
             try:
@@ -398,17 +462,21 @@ def main():
                     base_wait = min(2 ** (attempt + 1), 60)
                     jitter = random.uniform(0, base_wait * 0.5)
                     wait = base_wait + jitter
-                    log.warning(f"API rate limited (attempt {attempt+1}/8), waiting {wait:.1f}s...")
+                    log.warning(
+                        f"API rate limited (attempt {attempt+1}/8), waiting {wait:.1f}s..."
+                    )
                     time.sleep(wait)
                 else:
                     log.error(f"API preflight failed: {e}")
                     break
 
     if not preflight_ok:
-        print(f"\nCannot connect to API. Check your .env:\n"
-              f"  OPENAI_API_KEY  — is it valid?\n"
-              f"  OPENAI_BASE_URL — is {config.BASE_URL} correct?\n"
-              f"  HARNESS_MODEL   — does {config.MODEL} exist on this provider?")
+        print(
+            f"\nCannot connect to API. Check your .env:\n"
+            f"  OPENAI_API_KEY  — is it valid?\n"
+            f"  OPENAI_BASE_URL — is {config.BASE_URL} correct?\n"
+            f"  HARNESS_MODEL   — does {config.MODEL} exist on this provider?"
+        )
         sys.exit(1)
 
     harness = Harness(profile)
