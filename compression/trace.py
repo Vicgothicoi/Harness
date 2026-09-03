@@ -61,8 +61,8 @@ def record_from_tool(
         detail = str(args.get("path", ""))[:120]
     elif tool_name == "run_shell":
         detail = str(args.get("command", ""))[:120]
-    elif tool_name in {"delegate_task", "delegate_tasks"}:
-        detail = str(args.get("task") or args.get("tasks") or "")[:120]
+    elif tool_name == "delegate_task":
+        detail = str(args.get("task") or "")[:120]
     elif tool_name in {"web_search", "web_fetch"}:
         detail = str(args.get("query") or args.get("url") or "")[:120]
     elif tool_name in {"browser_open", "browser_goto"}:

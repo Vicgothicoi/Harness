@@ -13,17 +13,15 @@ _DEFAULT_MAX = 10000
 _TOOL_MAX = {
     "run_shell": 20000,
     "read_file": 10000,
-    "read_skill_file": 10000,
     "web_fetch": 6000,
     "web_search": 4000,
     "delegate_task": 6000,
-    "delegate_tasks": 8000,
-    # Browser Testing MCP tools (for when Agent MCP bridging lands)
+    # Browser Testing MCP tools
     "browser_snapshot": 4000,
     "browser_console": 3000,
     "browser_evaluate": 3000,
-    "browser_screenshot": 1000,
 }
+_SKIP_COMPRESSION = {"read_skill_file"}
 
 
 def _limit_for(tool_name: str) -> int:
@@ -44,11 +42,9 @@ def compress_observation(
     """
     if not isinstance(result, str):
         result = str(result)
-    if not result:
-        return result
 
     limit = _limit_for(tool_name)
-    if len(result) <= limit:
+    if tool_name in _SKIP_COMPRESSION or len(result) <= limit:
         return result
 
     head_size = int(limit * 0.55)

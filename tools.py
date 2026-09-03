@@ -250,58 +250,6 @@ def delegate_task(task: str, role: str = "assistant") -> str:
     return result
 
 
-def delegate_tasks(tasks: list[dict]) -> str:
-    """
-    Spawn multiple sub-agents IN PARALLEL, each in an isolated context.
-
-    Each task dict must have:
-      - "task": str  — detailed description of the subtask
-      - "role": str  — optional role label (default: "assistant")
-
-    All sub-agents run concurrently. The parent receives a combined summary
-    once ALL sub-agents have finished. Use this when you have multiple
-    independent subtasks that do not depend on each other's results.
-
-    Example:
-      delegate_tasks([
-          {"task": "Write a BPE tokenizer in C, save to tokenizer.c", "role": "module_writer"},
-          {"task": "Write unit tests for the tokenizer, save to test_tokenizer.c", "role": "test_writer"},
-      ])
-
-    Do NOT use this when subtasks depend on each other's output — use
-    sequential delegate_task calls instead.
-    """
-    if not tasks:
-        return "[error] delegate_tasks requires at least one task"
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    # Cap parallelism to avoid hammering the API with too many simultaneous calls
-    max_workers = min(len(tasks), 5)
-
-    # Preserve original order in the output
-    results: list[str] = [""] * len(tasks)
-
-    def run_one(index: int, item: dict) -> tuple[int, str]:
-        task_str = item.get("task", "")
-        role_str = item.get("role", "assistant")
-        if not task_str.strip():
-            return index, f"[error] Task {index + 1} has an empty 'task' field"
-        return index, delegate_task(task_str, role_str)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(run_one, i, t): i for i, t in enumerate(tasks)}
-        for future in as_completed(futures):
-            idx, result = future.result()
-            results[idx] = result
-
-    sections = [
-        f"### Sub-agent {i + 1} ({tasks[i].get('role', 'assistant')})\n{r}"
-        for i, r in enumerate(results)
-    ]
-    return "\n\n---\n\n".join(sections)
-
-
 def _run_shell_description() -> str:
     if os.name == "nt":
         return (
@@ -470,49 +418,6 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "description": "Role for the sub-agent (e.g. 'codebase_explorer', 'test_runner', 'dependency_installer')",
                         "default": "assistant",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_tasks",
-            "description": (
-                "Spawn MULTIPLE sub-agents IN PARALLEL, each in a completely isolated context. "
-                "Use this instead of multiple delegate_task calls when you have independent subtasks "
-                "that do not depend on each other's results. All sub-agents run concurrently and "
-                "their results are returned together once all finish. "
-                "Each task gets a clean context window — sub-agents do NOT see your history or each other. "
-                "Prefer this over sequential delegate_task when: "
-                "(1) writing multiple independent modules simultaneously, "
-                "(2) running different test suites in parallel, "
-                "(3) exploring different parts of a codebase at the same time. "
-                "Do NOT use when subtasks depend on each other's output."
-            ),
-            "parameters": {
-                "type": "object",
-                "required": ["tasks"],
-                "properties": {
-                    "tasks": {
-                        "type": "array",
-                        "description": "List of independent subtasks to run in parallel",
-                        "items": {
-                            "type": "object",
-                            "required": ["task"],
-                            "properties": {
-                                "task": {
-                                    "type": "string",
-                                    "description": "Detailed description of the subtask",
-                                },
-                                "role": {
-                                    "type": "string",
-                                    "description": "Role for this sub-agent (e.g. 'module_writer', 'test_runner')",
-                                    "default": "assistant",
-                                },
-                            },
-                        },
                     },
                 },
             },
@@ -739,7 +644,6 @@ TOOL_DISPATCH = {
     "list_files": list_files,
     "run_shell": run_shell,
     "delegate_task": delegate_task,
-    "delegate_tasks": delegate_tasks,
     "web_search": web_search,
     "web_fetch": web_fetch,
 }

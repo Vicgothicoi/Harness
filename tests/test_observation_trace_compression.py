@@ -46,6 +46,21 @@ class ObservationCompressionTests(unittest.TestCase):
         self.assertLess(len(out), len(big))
         self.assertIn("big.txt", out)
 
+    def test_read_skill_file_skips_compression(self):
+        big = "S" * 20000
+        out = compress_observation(
+            "read_skill_file", {"path": "skills/foo/SKILL.md"}, big
+        )
+        self.assertEqual(out, big)
+        self.assertNotIn("[OBSERVATION COMPRESSED]", out)
+
+    def test_browser_screenshot_uses_default_limit(self):
+        mid = "E" * 2000
+        out = compress_observation(
+            "browser_screenshot", {"path": "_screenshot.png"}, mid
+        )
+        self.assertEqual(out, mid)
+
 
 class TraceCompressionTests(unittest.TestCase):
     def test_record_from_tool_success_and_failure(self):

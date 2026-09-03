@@ -207,8 +207,8 @@ class PreExitVerificationHook(AgentHook):
 
     @staticmethod
     def _has_done_work(messages: list[dict]) -> bool:
-        """Check if the agent has called any action tools (run_shell, write_file, delegate_task/delegate_tasks)."""
-        action_tools = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
+        """Check if the agent has called any action tools (run_shell, write_file, delegate_task)."""
+        action_tools = {"run_shell", "write_file", "delegate_task"}
         for msg in messages:
             if msg.get("role") == "assistant":
                 for tc in msg.get("tool_calls", []):
@@ -412,7 +412,7 @@ class RecoveryStrategyHook(AgentHook):
         "no module named",
         "modulenotfounderror",
     )
-    ACTION_TOOLS = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
+    ACTION_TOOLS = {"run_shell", "write_file", "delegate_task"}
     READ_ONLY_PREFIXES = (
         "cat ",
         "ls",
@@ -544,12 +544,12 @@ class RecoveryStrategyHook(AgentHook):
             return None
 
         if mode == "ENV_FIX":
-            if tool_name in {"write_file", "delegate_task", "delegate_tasks"}:
+            if tool_name in {"write_file", "delegate_task"}:
                 return "[blocked] Recovery mode ENV_FIX only allows diagnosis, installation, and environment repair actions."
             return None
 
         if mode == "SPEC_RECHECK":
-            if tool_name in {"write_file", "delegate_task", "delegate_tasks"}:
+            if tool_name in {"write_file", "delegate_task"}:
                 return "[blocked] Recovery mode SPEC_RECHECK is read-only. Re-read the task and verification outputs first."
             if tool_name == "run_shell" and not self._is_read_only_command(
                 tool_args.get("command", "")
@@ -572,7 +572,6 @@ class RecoveryStrategyHook(AgentHook):
         if mode == "FINAL_VERIFY":
             if tool_name in {
                 "delegate_task",
-                "delegate_tasks",
                 "web_search",
                 "web_fetch",
             }:

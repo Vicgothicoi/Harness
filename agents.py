@@ -34,7 +34,7 @@ from shell_session import PersistentShellSession
 
 log = logging.getLogger("harness")
 
-ACTION_TOOLS = {"run_shell", "write_file", "delegate_task", "delegate_tasks"}
+ACTION_TOOLS = {"run_shell", "write_file", "delegate_task"}
 
 
 def _reinject_memory_blocks(

@@ -10,7 +10,7 @@
 - **可插拔 Profile**：`app-builder`、`terminal`、`swe-bench`、`reasoning`
 - **四层记忆**：工作记忆、状态记忆、项目记忆、长期记忆
 - **四层上下文压缩**：观察压缩、轨迹压缩、状态压缩、全文重置（handoff）
-- **工具与子 Agent**：读写文件、持久 Shell、并行委派、联网检索、偏好记忆
+- **工具与子 Agent**：读写文件、持久 Shell、子 Agent 委派、联网检索、偏好记忆
 - **钩子**：循环检测、退出前强制验证、时间预算、错误引导、失败恢复
 - **Skills 渐进披露**：启动时只注入目录，由 Agent 按需读取 `SKILL.md`
 - **浏览器评测 MCP**：`app-builder` 的 Evaluator 可通过 Playwright 做 UI 测试
@@ -111,7 +111,7 @@ Agent 在隔离的 `config.WORKSPACE` 内操作，路径不允许逃出工作区
 | `read_file` / `write_file` / `list_files` | 工作区内文件 |
 | `read_skill_file` | 读取 `skills/` 下的技能文档 |
 | `run_shell` | 持久 Shell 会话（保留 cwd / env） |
-| `delegate_task` / `delegate_tasks` | 隔离上下文的子 Agent  |
+| `delegate_task` | 隔离上下文的子 Agent  |
 | `web_search` / `web_fetch` | 查文档、拉网页 |
 | `remember_preference` | 写入全局长期偏好 |
 
