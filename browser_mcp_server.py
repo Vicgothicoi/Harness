@@ -22,6 +22,7 @@ import atexit
 
 from fastmcp import FastMCP
 
+import config
 from browser_session import BrowserSession
 
 # ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ def stop_dev_server() -> str:
 
 
 @mcp.tool()
-def browser_snapshot(max_chars: int = 2000) -> str:
+def browser_snapshot(max_chars: int = config.TOOL_RESULT_HARD_CAP) -> str:
     """Return current URL, title, and visible body text."""
     return _session.snapshot(max_chars=max_chars)
 

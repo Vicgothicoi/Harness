@@ -1,17 +1,18 @@
 """
-Observation compression — shrink individual tool results before they enter
-the conversation window. Rules-only (no LLM) in v1.
+Observation compression — the only conversation-facing truncation policy.
 
-Existing tools may already coarse-truncate; this layer applies a unified
-per-tool / global ceiling on top.
+Tools may apply a hard cap to avoid OOM; this layer decides what the model sees.
+Rules-only (no LLM).
 """
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
 import config
 
-_DEFAULT_MAX = 10000
 _TOOL_MAX = {
-    "run_shell": 20000,
+    "run_shell": 10000,
     "read_file": 10000,
     "web_fetch": 6000,
     "web_search": 4000,
@@ -23,49 +24,190 @@ _TOOL_MAX = {
 }
 _SKIP_COMPRESSION = {"read_skill_file"}
 
+_ERROR_PATTERN = re.compile(
+    r"(?i)(error|fail|assert|exception|traceback|warning|not found|denied|refused|fatal)",
+)
+
+
+@dataclass
+class ShellObservation:
+    """Structured run_shell result. Compression needs stdout and stderr split."""
+
+    stdout: str = ""
+    stderr: str = ""
+
 
 def _limit_for(tool_name: str) -> int:
-    tool_max = int(_TOOL_MAX.get(tool_name, _DEFAULT_MAX))
-    global_max = int(getattr(config, "OBSERVATION_MAX_CHARS", tool_max) or tool_max)
-    return min(tool_max, global_max)
+    global_max = int(config.OBSERVATION_MAX_CHARS)
+    tool_max = _TOOL_MAX.get(tool_name)
+    if tool_max is None:
+        return global_max
+    return min(int(tool_max), global_max)
+
+
+def _source_hint(tool_args: dict | None) -> str:
+    if not isinstance(tool_args, dict):
+        return ""
+    path = (
+        tool_args.get("path")
+        or tool_args.get("command")
+        or tool_args.get("url")
+        or tool_args.get("query")
+    )
+    if path:
+        return f" source={str(path)[:120]}"
+    return ""
+
+
+def _as_text(result: object) -> str:
+    if isinstance(result, ShellObservation):
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if stderr:
+            return (stdout + "\n\n--- STDERR ---\n" + stderr).strip()
+        return stdout
+    if result is None:
+        return ""
+    if not isinstance(result, str):
+        return str(result)
+    return result
 
 
 def compress_observation(
     tool_name: str,
     tool_args: dict | None,
-    result: str,
+    result: object,
 ) -> str:
     """
-    Rules-based compression of a single tool result.
-
-    Returns the string stored in the conversation as the tool message content.
+    Compress a single tool result for the conversation window.
     """
-    if not isinstance(result, str):
-        result = str(result)
+    if tool_name in _SKIP_COMPRESSION:
+        return _as_text(result)
 
     limit = _limit_for(tool_name)
-    if tool_name in _SKIP_COMPRESSION or len(result) <= limit:
-        return result
+    if tool_name == "run_shell":
+        return _compress_shell(result, limit, tool_args)
 
-    head_size = int(limit * 0.55)
-    tail_size = limit - head_size - 120
-    if tail_size < 200:
-        tail_size = 200
-        head_size = max(200, limit - tail_size - 120)
+    text = _as_text(result)
+    if len(text) <= limit:
+        return text
+    return _compress_prefix_lines(text, limit, tool_name, tool_args)
 
-    head = result[:head_size]
-    tail = result[-tail_size:]
-    omitted = len(result) - head_size - tail_size
-    path_hint = ""
-    if isinstance(tool_args, dict):
-        path = tool_args.get("path") or tool_args.get("command")
-        if path:
-            path_hint = f" source={str(path)[:120]}"
 
-    return (
-        f"{head}\n"
-        f"\n[OBSERVATION COMPRESSED] omitted ~{omitted} chars "
-        f"(tool={tool_name}{path_hint}; limit={limit}). "
-        f"Re-read with a narrower command/path if you need the middle.\n"
-        f"\n{tail}"
+def _compress_shell(
+    result: object, limit: int, tool_args: dict | None
+) -> str:
+    if isinstance(result, ShellObservation):
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if not stdout and not stderr:
+            return "(no output)"
+        return _smart_truncate_output(stdout, stderr, limit)
+
+    text = _as_text(result)
+    if text.startswith("[error]"):
+        if len(text) <= limit:
+            return text
+        return _compress_prefix_lines(text, limit, "run_shell", tool_args)
+    if len(text) <= limit:
+        return text
+    return _smart_truncate_output(text.strip(), "", limit)
+
+
+def _smart_truncate_output(stdout: str, stderr: str, limit: int) -> str:
+    """Preserve stderr and error-like lines from the middle of stdout.
+
+    Strategy:
+    - Always keep stderr in full (up to 40% of the budget) — errors live here.
+    - Extract lines containing error/warning keywords from the middle of stdout
+      that would otherwise be lost in a naive head+tail cut.
+    - Use head + important-middle + tail for stdout.
+    """
+    combined = (stdout + "\n" + stderr).strip() if stderr else stdout
+    if len(combined) <= limit:
+        return combined
+
+    stderr_budget = min(len(stderr), int(limit * 0.4))
+    stdout_budget = limit - stderr_budget
+
+    if len(stderr) > stderr_budget:
+        stderr = "...[stderr truncated]\n" + stderr[-(stderr_budget - 30) :]
+
+    if len(stdout) <= stdout_budget:
+        truncated_stdout = stdout
+    else:
+        head_size = int(stdout_budget * 0.40)
+        tail_size = int(stdout_budget * 0.40)
+        middle_budget = stdout_budget - head_size - tail_size - 200
+
+        head = stdout[:head_size]
+        tail = stdout[-tail_size:]
+        middle = stdout[head_size:-tail_size] if tail_size else stdout[head_size:]
+        important_lines = []
+        if middle and middle_budget > 0:
+            for line in middle.splitlines():
+                if _ERROR_PATTERN.search(line):
+                    important_lines.append(line)
+
+        important_section = "\n".join(important_lines)
+        if len(important_section) > middle_budget:
+            important_section = important_section[:middle_budget]
+
+        if important_section:
+            middle_part = (
+                f"\n\n[...{len(middle)} chars omitted — key lines extracted:]\n"
+                + important_section
+                + "\n[...end extracted lines]\n\n"
+            )
+        else:
+            middle_part = (
+                f"\n\n[TRUNCATED — {len(middle)} chars omitted from middle]\n\n"
+            )
+        truncated_stdout = head + middle_part + tail
+
+    if stderr:
+        return truncated_stdout + "\n\n--- STDERR ---\n" + stderr
+    return truncated_stdout
+
+
+def _compress_prefix_lines(
+    text: str,
+    limit: int,
+    tool_name: str,
+    tool_args: dict | None,
+) -> str:
+    """Keep a numbered prefix; drop the rest."""
+    hint = _source_hint(tool_args)
+    lines = text.splitlines()
+    if not lines:
+        lines = [text]
+    total_lines = len(lines)
+
+    footer = (
+        f"\n[OBSERVATION COMPRESSED] showing first {{kept}} of {total_lines} lines, "
+        f"omitted ~{{omitted}} chars "
+        f"(tool={tool_name}{hint}; limit={limit}). "
+        "Re-read with a narrower path/command if you need the rest.\n"
     )
+    footer_est = len(footer.format(kept=total_lines, omitted=len(text)))
+    budget = max(limit - footer_est, 64)
+
+    out_parts: list[str] = []
+    used = 0
+    kept = 0
+    for i, line in enumerate(lines, 1):
+        numbered = f"{i}| {line}\n"
+        if used + len(numbered) > budget:
+            if kept == 0:
+                prefix = f"{i}| "
+                room = max(budget - len(prefix) - 1, 16)
+                out_parts.append(prefix + line[:room] + "\n")
+                kept = 1
+            break
+        out_parts.append(numbered)
+        used += len(numbered)
+        kept += 1
+
+    kept_raw = "\n".join(lines[:kept])
+    omitted = max(len(text) - len(kept_raw), 0)
+    return "".join(out_parts) + footer.format(kept=kept, omitted=omitted)

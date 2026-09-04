@@ -6,7 +6,7 @@ from compression.full import (
     messages_to_text,
     restore_from_checkpoint,
 )
-from compression.observation import compress_observation
+from compression.observation import ShellObservation, compress_observation
 from compression.state import compress_state
 from compression.trace import (
     TRACE_MARKER,
@@ -22,6 +22,7 @@ __all__ = [
     "ActionRecord",
     "TraceBuffer",
     "compress_observation",
+    "ShellObservation",
     "compress_trace",
     "compress_state",
     "format_trace_summary",

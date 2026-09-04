@@ -10,6 +10,18 @@ import os
 from pathlib import Path
 
 import config
+from compression.observation import ShellObservation
+
+_RESULT_HARD_CAP = int(getattr(config, "TOOL_RESULT_HARD_CAP", 1_000_000))
+_LIST_FILES_MAX = 200
+_SKILL_FILE_HARD_CAP = 60_000
+
+
+def _hard_cap(text: str, cap: int = _RESULT_HARD_CAP) -> str:
+    if len(text) <= cap:
+        return text
+    return text[:cap]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,18 +46,11 @@ def read_file(path: str) -> str:
     p = _resolve(path)
     if not p.exists():
         return f"[error] File not found: {path}"
-    content = p.read_text(encoding="utf-8", errors="replace")
-    limit = 60_000
-    if len(content) > limit:
-        total = len(content)
-        content = content[:limit] + (
-            f"\n\n[TRUNCATED] You are seeing {limit} of {total} total characters. "
-            f"The remaining {total - limit} characters are NOT shown above. "
-            f"You MUST use run_shell with "
-            f"{'type/more' if os.name == 'nt' else 'head/tail/sed'} "
-            f"to read the rest if needed."
-        )
-    return content
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            return f.read(_RESULT_HARD_CAP)
+    except OSError as e:
+        return f"[error] {e}"
 
 
 def read_skill_file(path: str) -> str:
@@ -58,7 +63,10 @@ def read_skill_file(path: str) -> str:
         return f"[error] Path must be inside skills/ directory: {path}"
     if not p.exists():
         return f"[error] Skill file not found: {path}"
-    return p.read_text(encoding="utf-8", errors="replace")[:60_000]
+    return _hard_cap(
+        p.read_text(encoding="utf-8", errors="replace"),
+        _SKILL_FILE_HARD_CAP,
+    )
 
 
 def write_file(path: str, content: str) -> str:
@@ -101,7 +109,12 @@ def list_files(directory: str = ".") -> str:
         entries.append(str(rel))
     if not entries:
         return "(empty)"
-    return "\n".join(entries[:200])
+    if len(entries) > _LIST_FILES_MAX:
+        return (
+            "\n".join(entries[:_LIST_FILES_MAX])
+            + f"\n...[list stopped at {_LIST_FILES_MAX} files]"
+        )
+    return "\n".join(entries)
 
 
 def run_shell(
@@ -109,7 +122,7 @@ def run_shell(
     timeout: int = 300,
     runtime_state=None,
     agent_name: str | None = None,
-) -> str:
+) -> str | ShellObservation:
     """Run a shell command inside the agent's persistent shell session."""
     if runtime_state is None or runtime_state.shell_session is None:
         return "[error] No active shell session for run_shell"
@@ -121,82 +134,12 @@ def run_shell(
                 f"If this command legitimately needs more time (e.g. compilation, training), "
                 f"retry with a larger timeout parameter."
             )
-        output = _smart_truncate_output(shell_result.stdout, shell_result.stderr)
-        return output or "(no output)"
+        return ShellObservation(
+            stdout=_hard_cap(shell_result.stdout or ""),
+            stderr=_hard_cap(shell_result.stderr or ""),
+        )
     except Exception as e:
         return f"[error] {e}"
-
-
-def _smart_truncate_output(stdout: str, stderr: str, limit: int = 30_000) -> str:
-    """Truncate command output while preserving the most useful information.
-
-    Strategy:
-    - Always keep stderr in full (up to half the budget) — errors live here.
-    - Extract lines containing error/warning keywords from the middle of stdout
-      that would otherwise be lost in a naive head+tail cut.
-    - Use head + important-middle + tail for stdout.
-    """
-    import re
-
-    stderr = (stderr or "").strip()
-    stdout = (stdout or "").strip()
-    combined = (stdout + "\n" + stderr).strip() if stderr else stdout
-
-    if len(combined) <= limit:
-        return combined
-
-    # Reserve up to 40% of budget for stderr, rest for stdout
-    stderr_budget = min(len(stderr), int(limit * 0.4))
-    stdout_budget = limit - stderr_budget
-
-    # Truncate stderr if needed (keep tail — most recent errors matter most)
-    if len(stderr) > stderr_budget:
-        stderr = "...[stderr truncated]\n" + stderr[-(stderr_budget - 30) :]
-
-    # Smart-truncate stdout
-    if len(stdout) <= stdout_budget:
-        truncated_stdout = stdout
-    else:
-        # Head and tail get 40% each, important middle lines get 20%
-        head_size = int(stdout_budget * 0.40)
-        tail_size = int(stdout_budget * 0.40)
-        middle_budget = stdout_budget - head_size - tail_size - 200  # 200 for markers
-
-        head = stdout[:head_size]
-        tail = stdout[-tail_size:]
-
-        # Extract important lines from the middle that would be lost
-        middle = stdout[head_size:-tail_size] if tail_size else stdout[head_size:]
-        important_lines = []
-        _error_pattern = re.compile(
-            r"(?i)(error|fail|assert|exception|traceback|warning|not found|denied|refused|fatal)",
-        )
-        if middle and middle_budget > 0:
-            for line in middle.splitlines():
-                if _error_pattern.search(line):
-                    important_lines.append(line)
-
-        important_section = "\n".join(important_lines)
-        if len(important_section) > middle_budget:
-            important_section = important_section[:middle_budget]
-
-        middle_part = ""
-        if important_section:
-            middle_part = (
-                f"\n\n[...{len(middle)} chars omitted — key lines extracted:]\n"
-                + important_section
-                + "\n[...end extracted lines]\n\n"
-            )
-        else:
-            middle_part = (
-                f"\n\n[TRUNCATED — {len(middle)} chars omitted from middle]\n\n"
-            )
-
-        truncated_stdout = head + middle_part + tail
-
-    if stderr:
-        return truncated_stdout + "\n\n--- STDERR ---\n" + stderr
-    return truncated_stdout
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +185,7 @@ def delegate_task(task: str, role: str = "assistant") -> str:
 
     if not result:
         return "[sub-agent returned no output]"
-
-    # Truncate to avoid blowing up the parent's context
-    if len(result) > 8000:
-        result = result[:8000] + "\n...(truncated)"
-
-    return result
+    return _hard_cap(result)
 
 
 def _run_shell_description() -> str:
@@ -615,18 +553,15 @@ def web_fetch(url: str) -> str:
             },
         )
         resp = urllib.request.urlopen(req, timeout=15)
-        html = resp.read().decode("utf-8", errors="replace")
+        html = resp.read(_RESULT_HARD_CAP).decode("utf-8", errors="replace")
 
-        # Strip HTML tags, keep text
+        # Strip HTML tags, keep text (conversation truncation is observation's job)
         text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
         text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
 
-        if len(text) > 10000:
-            text = text[:10000] + "\n\n[TRUNCATED]"
-
-        return text or "(empty page)"
+        return _hard_cap(text) or "(empty page)"
 
     except Exception as e:
         return f"[error] Web fetch failed: {e}"
@@ -651,7 +586,7 @@ TOOL_DISPATCH = {
 
 def execute_tool(
     name: str, arguments: dict, runtime_state=None, agent_name: str | None = None
-) -> str:
+) -> str | ShellObservation:
     """Execute a tool by name with pre-validation and auto-correction."""
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
@@ -676,6 +611,12 @@ def execute_tool(
 
     # Prepend the auto-fix warning so the model knows what was corrected
     if fix_warning:
-        result = f"{fix_warning}\n\n{result}"
+        if isinstance(result, ShellObservation):
+            result = ShellObservation(
+                stdout=f"{fix_warning}\n\n{result.stdout}",
+                stderr=result.stderr,
+            )
+        else:
+            result = f"{fix_warning}\n\n{result}"
 
     return result

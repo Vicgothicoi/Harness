@@ -37,14 +37,24 @@ class ObservationCompressionTests(unittest.TestCase):
         out = compress_observation("run_shell", {"command": "ls"}, "ok\n")
         self.assertEqual(out, "ok\n")
 
-    def test_long_result_head_tail(self):
-        big = "A" * 20000
+    def test_empty_shell_observation_is_no_output(self):
+        from compression.observation import ShellObservation
+
+        out = compress_observation(
+            "run_shell", {"command": "true"}, ShellObservation()
+        )
+        self.assertEqual(out, "(no output)")
+
+    def test_long_result_prefix_with_line_numbers(self):
+        lines = [f"{i:04d} " + ("A" * 80) for i in range(1, 201)]
+        big = "\n".join(lines)
         out = compress_observation("read_file", {"path": "big.txt"}, big)
         self.assertIn("[OBSERVATION COMPRESSED]", out)
-        self.assertTrue(out.startswith("A"))
-        self.assertTrue(out.rstrip().endswith("A"))
-        self.assertLess(len(out), len(big))
+        self.assertTrue(out.startswith("1| 0001 "))
         self.assertIn("big.txt", out)
+        prefix = out.split("[OBSERVATION COMPRESSED]", 1)[0]
+        self.assertNotIn("0200 ", prefix)
+        self.assertLess(len(out), len(big))
 
     def test_read_skill_file_skips_compression(self):
         big = "S" * 20000
@@ -60,6 +70,22 @@ class ObservationCompressionTests(unittest.TestCase):
             "browser_screenshot", {"path": "_screenshot.png"}, mid
         )
         self.assertEqual(out, mid)
+
+    def test_run_shell_keeps_stderr_and_error_lines(self):
+        from compression.observation import ShellObservation
+
+        stdout = "start\n" + ("x" * 12000) + "\nerror: boom\n" + ("y" * 12000)
+        stderr = "FATAL: compile failed"
+        out = compress_observation(
+            "run_shell",
+            {"command": "make"},
+            ShellObservation(stdout=stdout, stderr=stderr),
+        )
+        self.assertIn("--- STDERR ---", out)
+        self.assertIn("FATAL: compile failed", out)
+        self.assertIn("error: boom", out)
+        self.assertIn("start", out)
+        self.assertLess(len(out), len(stdout) + len(stderr))
 
 
 class TraceCompressionTests(unittest.TestCase):

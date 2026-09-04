@@ -36,8 +36,8 @@ BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 MODEL = os.environ.get("MODEL", "gpt-4o")
 
 # --- Token budgets ---
-COMPRESS_THRESHOLD = 80000
-RESET_THRESHOLD = 150000
+COMPRESS_THRESHOLD = 10000
+RESET_THRESHOLD = 256000
 
 # --- Harness loop ---
 MAX_HARNESS_ROUNDS = 5
@@ -68,6 +68,7 @@ LONG_TERM_PREFS_MAX_CHARS = 800
 LONG_TERM_MEMORY_DIR = "D:/Code/Python/multi-coding-agent"
 
 # --- Compression ---
-OBSERVATION_MAX_CHARS = 8000
+TOOL_RESULT_HARD_CAP = 100_000
+OBSERVATION_MAX_CHARS = 10_000
 TRACE_KEEP_RECENT = 8
 TRACE_SUMMARY_MAX_CHARS = 4000

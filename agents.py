@@ -44,8 +44,9 @@ def _reinject_memory_blocks(
     return build_working_memory_from_runtime(messages, runtime_state)
 
 
-def _truncate(s: str, n: int) -> str:
-    return s[:n] + "..." if len(s) > n else s
+def _truncate(s: object, n: int) -> str:
+    text = s if isinstance(s, str) else str(s)
+    return text[:n] + "..." if len(text) > n else text
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +601,8 @@ class Agent:
                     log.info(
                         f"[{self.name}] tool: {fn_name}({_truncate(str(fn_args), 120)})"
                     )
-                    result = self._execute_tool(fn_name, fn_args, runtime_state)
+                    raw = self._execute_tool(fn_name, fn_args, runtime_state)
+                    result = compress_observation(fn_name, fn_args, raw)
                     log.debug(f"[{self.name}] tool result: {_truncate(result, 200)}")
                     trace.tool_call(fn_name, fn_args, result)
 
@@ -610,7 +612,6 @@ class Agent:
                                 fn_name, fn_args, result, iteration=iteration
                             )
                         )
-                        result = compress_observation(fn_name, fn_args, result)
 
                     messages.append(
                         {

@@ -276,9 +276,14 @@ class BrowserSession:
     # Observe
     # ------------------------------------------------------------------
 
-    def snapshot(self, max_chars: int = 2000) -> str:
+    def snapshot(self, max_chars: int | None = None) -> str:
         """Return URL, title, and visible body text."""
-        return self._invoke(self._snapshot_impl, max_chars)
+        cap = (
+            max_chars
+            if max_chars is not None
+            else int(getattr(config, "TOOL_RESULT_HARD_CAP", 100_000))
+        )
+        return self._invoke(self._snapshot_impl, cap)
 
     def _snapshot_impl(self, max_chars: int) -> str:
         err = self._require_page()
@@ -288,7 +293,7 @@ class BrowserSession:
         try:
             text = self._page.inner_text("body")
             if len(text) > max_chars:
-                text = text[:max_chars] + f"\n...[{len(text) - max_chars} chars truncated]"
+                text = text[:max_chars]
             return (
                 f"URL: {self._page.url}\n"
                 f"Title: {self._page.title()}\n"
