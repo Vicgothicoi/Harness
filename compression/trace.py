@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import config
+from tool_result import ToolResult, wrap_legacy
 
 TRACE_MARKER = "[TRACE SUMMARY]"
 
@@ -20,6 +21,8 @@ class ActionRecord:
     ok: bool
     detail: str = ""  # path, command snippet, or short note
     iteration: int = 0
+    kind: str = "ok"
+    exit_code: int | None = None
 
 
 @dataclass
@@ -44,47 +47,70 @@ class TraceBuffer:
         self.compressed_through = len(self.records)
 
 
-def record_from_tool(
-    tool_name: str,
-    tool_args: dict | None,
-    result: str,
-    iteration: int = 0,
-) -> ActionRecord:
-    """Build an ActionRecord from a tool call (rules only)."""
-    args = tool_args or {}
-    ok = not (
-        isinstance(result, str)
-        and (result.startswith("[error]") or result.startswith("[blocked]"))
-    )
-    detail = ""
+def _detail_from_args(tool_name: str, args: dict) -> str:
     if tool_name in {"write_file", "read_file", "read_skill_file"}:
-        detail = str(args.get("path", ""))[:120]
-    elif tool_name == "run_shell":
-        detail = str(args.get("command", ""))[:120]
-    elif tool_name == "delegate_task":
-        detail = str(args.get("task") or "")[:120]
-    elif tool_name in {"web_search", "web_fetch"}:
-        detail = str(args.get("query") or args.get("url") or "")[:120]
-    elif tool_name in {"browser_open", "browser_goto"}:
-        detail = str(args.get("url", ""))[:120]
-    elif tool_name in {"browser_click", "browser_fill"}:
-        detail = str(args.get("selector", ""))[:120]
-    elif tool_name == "browser_evaluate":
-        detail = str(args.get("expression", ""))[:120]
-    elif tool_name.startswith("browser_") or tool_name in {
+        return str(args.get("path", ""))[:120]
+    if tool_name == "run_shell":
+        return str(args.get("command", ""))[:120]
+    if tool_name == "delegate_task":
+        return str(args.get("task") or "")[:120]
+    if tool_name in {"web_search", "web_fetch"}:
+        return str(args.get("query") or args.get("url") or "")[:120]
+    if tool_name in {"browser_open", "browser_goto"}:
+        return str(args.get("url", ""))[:120]
+    if tool_name in {"browser_click", "browser_fill"}:
+        return str(args.get("selector", ""))[:120]
+    if tool_name == "browser_evaluate":
+        return str(args.get("expression", ""))[:120]
+    if tool_name.startswith("browser_") or tool_name in {
         "start_dev_server",
         "stop_dev_server",
     }:
-        detail = str(args)[:80]
-    else:
-        detail = str(args)[:80]
+        return ""
+    return str(args)[:120]
 
-    if not ok and isinstance(result, str):
-        # Keep a short failure hint
-        hint = result.split("\n", 1)[0][:100]
-        detail = f"{detail} | {hint}" if detail else hint
 
-    return ActionRecord(tool=tool_name, ok=ok, detail=detail.strip(), iteration=iteration)
+def _failure_hint(result: ToolResult) -> str:
+    if result.kind == "command_failed" and result.exit_code is not None:
+        return f"exit={result.exit_code}"
+    text = result.payload_text().split("\n", 1)[0].strip()
+    return text[:100]
+
+
+def _status_label(rec: ActionRecord) -> str:
+    if rec.kind == "blocked":
+        return "BLOCKED"
+    if rec.kind == "error":
+        return "ERROR"
+    if rec.kind == "command_failed":
+        if rec.exit_code is not None:
+            return f"FAIL exit={rec.exit_code}"
+        return "FAIL"
+    return "ok"
+
+
+def record_from_tool(
+    tool_name: str,
+    tool_args: dict | None,
+    result: object,
+    iteration: int = 0,
+) -> ActionRecord:
+    """Build an ActionRecord from a tool call (ToolResult or legacy str)."""
+    tr = wrap_legacy(result)
+    args = tool_args or {}
+    detail = _detail_from_args(tool_name, args)
+    if not tr.task_ok:
+        hint = _failure_hint(tr)
+        if hint:
+            detail = f"{detail} | {hint}" if detail else hint
+    return ActionRecord(
+        tool=tool_name,
+        ok=tr.task_ok,
+        detail=detail.strip(),
+        iteration=iteration,
+        kind=tr.kind,
+        exit_code=tr.exit_code,
+    )
 
 
 def format_trace_summary(records: list[ActionRecord], *, max_chars: int | None = None) -> str:
@@ -115,7 +141,7 @@ def format_trace_summary(records: list[ActionRecord], *, max_chars: int | None =
         if rec is None:
             lines.append(f"  ... ({omitted} actions omitted) ...")
             continue
-        status = "ok" if rec.ok else "FAIL"
+        status = _status_label(rec)
         detail = f" — {rec.detail}" if rec.detail else ""
         iter_s = f" i{rec.iteration}" if rec.iteration else ""
         lines.append(f"  [{status}]{iter_s} {rec.tool}{detail}")
@@ -132,12 +158,7 @@ def format_trace_summary(records: list[ActionRecord], *, max_chars: int | None =
 
 
 def _safe_split_index(messages: list[dict], target_idx: int) -> int:
-    """Ensure `recent` does not start on a lone tool response.
-
-    If the cut lands on a `tool` message, walk back to its assistant
-    tool_calls message so the pair stays together in `recent`.
-    Landing on an assistant with tool_calls is a valid cut — do not walk further.
-    """
+    """Ensure `recent` does not start on a lone tool response."""
     idx = max(0, min(target_idx, len(messages)))
     while idx > 0 and idx < len(messages) and messages[idx].get("role") == "tool":
         idx -= 1
@@ -174,7 +195,7 @@ def compress_trace(
     if not messages:
         return messages
     if keep_recent is None:
-        keep_recent = int(getattr(config, "TRACE_KEEP_RECENT", 8))
+        keep_recent = int(getattr(config, "TRACE_KEEP_RECENT", 10))
 
     system = [messages[0]] if messages[0].get("role") == "system" else []
     rest = messages[len(system) :]

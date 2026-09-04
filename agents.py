@@ -31,6 +31,7 @@ from compression.trace import TraceBuffer, compress_trace, record_from_tool
 from compression.state import compress_state
 from compression.full import full_compress_reset
 from shell_session import PersistentShellSession
+from tool_result import ToolResult, result_error, wrap_legacy
 
 log = logging.getLogger("harness")
 
@@ -272,14 +273,58 @@ class Agent:
         fn_name: str,
         fn_args: dict,
         runtime_state: AgentRuntimeState,
-    ) -> str:
+    ) -> ToolResult:
         """Dispatch to an MCP bridge when it owns the tool; else local tools."""
         for bridge in self.mcp_bridges:
             if bridge.has_tool(fn_name):
-                return bridge.call_tool(fn_name, fn_args)
+                return wrap_legacy(bridge.call_tool(fn_name, fn_args))
         return tools.execute_tool(
             fn_name, fn_args, runtime_state=runtime_state, agent_name=self.name
         )
+
+    def _commit_tool_result(
+        self,
+        *,
+        fn_name: str,
+        fn_args: dict,
+        raw: ToolResult,
+        tool_call_id: str,
+        messages: list[dict],
+        runtime_state: AgentRuntimeState,
+        iteration: int,
+        trace: TraceWriter,
+        executed: bool,
+    ) -> None:
+        rendered = compress_observation(fn_name, fn_args, raw)
+        log.debug(f"[{self.name}] tool result: {_truncate(rendered, 200)}")
+        trace.tool_call(fn_name, fn_args, rendered)
+        if self.enable_memory:
+            runtime_state.trace_buffer.add(
+                record_from_tool(fn_name, fn_args, raw, iteration=iteration)
+            )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": rendered,
+            }
+        )
+        if executed and fn_name in ACTION_TOOLS and raw.task_ok:
+            runtime_state.action_tool_count += 1
+            runtime_state.task_board.needs_final_update = True
+        for hook in self.hooks:
+            inject = hook.post_tool(
+                fn_name,
+                fn_args,
+                raw,
+                messages,
+                runtime_state=runtime_state,
+                agent_name=self.name,
+            )
+            if inject:
+                messages.append({"role": "user", "content": inject})
+                trace.hook_inject(type(hook).__name__, "post_tool", inject)
+                break
 
     def _create_runtime_state(self, task: str) -> AgentRuntimeState:
         return AgentRuntimeState(task_board=TaskBoard(goal=task))
@@ -559,12 +604,18 @@ class Agent:
                         trace.error(
                             "bad_json", f"{fn_name}: {tc.function.arguments[:200]}"
                         )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": f"[error] Invalid JSON arguments: {tc.function.arguments[:200]}",
-                            }
+                        self._commit_tool_result(
+                            fn_name=fn_name,
+                            fn_args={},
+                            raw=result_error(
+                                f"[error] Invalid JSON arguments: {tc.function.arguments[:200]}"
+                            ),
+                            tool_call_id=tc.id,
+                            messages=messages,
+                            runtime_state=runtime_state,
+                            iteration=iteration,
+                            trace=trace,
+                            executed=False,
                         )
                         continue
 
@@ -579,15 +630,19 @@ class Agent:
                             agent_name=self.name,
                         )
                         if blocked:
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": blocked,
-                                }
-                            )
                             trace.hook_inject(
                                 type(hook).__name__, "before_tool", blocked
+                            )
+                            self._commit_tool_result(
+                                fn_name=fn_name,
+                                fn_args=fn_args,
+                                raw=wrap_legacy(blocked),
+                                tool_call_id=tc.id,
+                                messages=messages,
+                                runtime_state=runtime_state,
+                                iteration=iteration,
+                                trace=trace,
+                                executed=False,
                             )
                             break
                     if blocked:
@@ -602,47 +657,17 @@ class Agent:
                         f"[{self.name}] tool: {fn_name}({_truncate(str(fn_args), 120)})"
                     )
                     raw = self._execute_tool(fn_name, fn_args, runtime_state)
-                    result = compress_observation(fn_name, fn_args, raw)
-                    log.debug(f"[{self.name}] tool result: {_truncate(result, 200)}")
-                    trace.tool_call(fn_name, fn_args, result)
-
-                    if self.enable_memory:
-                        runtime_state.trace_buffer.add(
-                            record_from_tool(
-                                fn_name, fn_args, result, iteration=iteration
-                            )
-                        )
-
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": result,
-                        }
+                    self._commit_tool_result(
+                        fn_name=fn_name,
+                        fn_args=fn_args,
+                        raw=wrap_legacy(raw),
+                        tool_call_id=tc.id,
+                        messages=messages,
+                        runtime_state=runtime_state,
+                        iteration=iteration,
+                        trace=trace,
+                        executed=True,
                     )
-
-                    if (
-                        fn_name in ACTION_TOOLS
-                        and not result.startswith("[error]")
-                        and not result.startswith("[blocked]")
-                    ):
-                        runtime_state.action_tool_count += 1
-                        runtime_state.task_board.needs_final_update = True
-
-                    # --- Hooks: post-tool ---
-                    for hook in self.hooks:
-                        inject = hook.post_tool(
-                            fn_name,
-                            fn_args,
-                            result,
-                            messages,
-                            runtime_state=runtime_state,
-                            agent_name=self.name,
-                        )
-                        if inject:
-                            messages.append({"role": "user", "content": inject})
-                            trace.hook_inject(type(hook).__name__, "post_tool", inject)
-                            break
 
                 # --- Check finish reason ---
                 if choice.finish_reason == "stop":  # 模型正常退出

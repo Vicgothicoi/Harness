@@ -18,6 +18,8 @@ import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from tool_result import ToolResult, result_error, wrap_legacy
+
 log = logging.getLogger("harness")
 
 Transport = Literal["inprocess", "stdio"]
@@ -35,8 +37,8 @@ class McpBridge(Protocol):
         """Return OpenAI function-calling schemas for this server's tools."""
         ...
 
-    def call_tool(self, name: str, arguments: dict | None = None) -> str:
-        """Invoke a tool and return a plain-text result for the agent loop."""
+    def call_tool(self, name: str, arguments: dict | None = None) -> ToolResult:
+        """Invoke a tool and return a ToolResult for the agent loop."""
         ...
 
     def close(self) -> None:
@@ -132,17 +134,21 @@ class BrowserMcpClient:
             self.connect()
         return list(self._schemas)
 
-    def call_tool(self, name: str, arguments: dict | None = None) -> str:
+    def call_tool(self, name: str, arguments: dict | None = None) -> ToolResult:
         if not self._connected or self._loop is None or self._client is None:
-            return "[error] BrowserMcpClient is not connected. Call connect() first."
+            return result_error(
+                "[error] BrowserMcpClient is not connected. Call connect() first."
+            )
         if name not in self._tool_names:
-            return f"[error] Unknown browser MCP tool: {name}"
+            return result_error(f"[error] Unknown browser MCP tool: {name}")
         try:
             return self._loop.run_until_complete(
                 self._async_call_tool(name, arguments or {})
             )
         except Exception as e:
-            return f"[error] MCP call_tool({name}) failed: {type(e).__name__}: {e}"
+            return result_error(
+                f"[error] MCP call_tool({name}) failed: {type(e).__name__}: {e}"
+            )
 
     def close(self) -> None:
         if not self._connected:
@@ -203,17 +209,19 @@ class BrowserMcpClient:
         self._schemas = [_mcp_tool_to_openai_schema(t) for t in tools]
         self._tool_names = {t.name for t in tools}
 
-    async def _async_call_tool(self, name: str, arguments: dict) -> str:
+    async def _async_call_tool(self, name: str, arguments: dict) -> ToolResult:
         assert self._client is not None
-        # Prefer raw protocol result so tool-level errors become strings,
-        # not raised exceptions that break the agent loop.
+        # MCP wire format is still text. isError and "[error]" payloads both
+        # become kind=error; browser_session may return "[error] ..." with
+        # isError=False.
         if hasattr(self._client, "call_tool_mcp"):
             raw = await self._client.call_tool_mcp(name, arguments)
-            if getattr(raw, "isError", False):
-                return f"[error] {_result_to_text(raw)}"
-            return _result_to_text(raw)
+            text = _result_to_text(raw)
+            if getattr(raw, "isError", False) and not text.startswith("[error]"):
+                text = f"[error] {text}"
+            return wrap_legacy(text)
         result = await self._client.call_tool(name, arguments)
-        return _result_to_text(result)
+        return wrap_legacy(_result_to_text(result))
 
     async def _async_close(self) -> None:
         if self._client is None:

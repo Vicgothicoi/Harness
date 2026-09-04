@@ -29,7 +29,7 @@ from compression.trace import (
     record_from_tool,
 )
 from pathlib import Path
-import config
+from tool_result import ShellObservation, from_shell, result_error, result_ok
 
 
 class ObservationCompressionTests(unittest.TestCase):
@@ -37,9 +37,22 @@ class ObservationCompressionTests(unittest.TestCase):
         out = compress_observation("run_shell", {"command": "ls"}, "ok\n")
         self.assertEqual(out, "ok\n")
 
-    def test_empty_shell_observation_is_no_output(self):
-        from compression.observation import ShellObservation
+    def test_unwraps_tool_result_payload(self):
+        out = compress_observation(
+            "read_file", {"path": "a.txt"}, result_ok("hello")
+        )
+        self.assertEqual(out, "hello")
 
+    def test_auto_fix_is_prepended_from_tool_result(self):
+        out = compress_observation(
+            "read_file",
+            {"path": "a.txt"},
+            result_ok("hello").with_auto_fix("[auto-fix] Converted path"),
+        )
+        self.assertTrue(out.startswith("[auto-fix] Converted path"))
+        self.assertIn("hello", out)
+
+    def test_empty_shell_observation_is_no_output(self):
         out = compress_observation(
             "run_shell", {"command": "true"}, ShellObservation()
         )
@@ -72,8 +85,6 @@ class ObservationCompressionTests(unittest.TestCase):
         self.assertEqual(out, mid)
 
     def test_run_shell_keeps_stderr_and_error_lines(self):
-        from compression.observation import ShellObservation
-
         stdout = "start\n" + ("x" * 12000) + "\nerror: boom\n" + ("y" * 12000)
         stderr = "FATAL: compile failed"
         out = compress_observation(
@@ -87,26 +98,63 @@ class ObservationCompressionTests(unittest.TestCase):
         self.assertIn("start", out)
         self.assertLess(len(out), len(stdout) + len(stderr))
 
+    def test_failed_shell_shows_exit_code(self):
+        out = compress_observation(
+            "run_shell",
+            {"command": "false"},
+            from_shell(ShellObservation(stdout="FAILED", exit_code=1)),
+        )
+        self.assertTrue(out.startswith("exit=1"))
+        self.assertIn("FAILED", out)
+
 
 class TraceCompressionTests(unittest.TestCase):
     def test_record_from_tool_success_and_failure(self):
         ok = record_from_tool("write_file", {"path": "a.py"}, "Wrote 10 chars", iteration=2)
         self.assertTrue(ok.ok)
+        self.assertEqual(ok.kind, "ok")
         self.assertEqual(ok.detail, "a.py")
         self.assertEqual(ok.iteration, 2)
 
-        bad = record_from_tool("run_shell", {"command": "false"}, "[error] exit 1")
-        self.assertFalse(bad.ok)
-        self.assertIn("false", bad.detail)
+        protocol = record_from_tool(
+            "run_shell", {"command": "false"}, "[error] timeout", iteration=1
+        )
+        self.assertFalse(protocol.ok)
+        self.assertEqual(protocol.kind, "error")
+        self.assertIn("false", protocol.detail)
+
+        failed = record_from_tool(
+            "run_shell",
+            {"command": "pytest"},
+            from_shell(ShellObservation(stdout="FAILED", exit_code=1)),
+        )
+        self.assertFalse(failed.ok)
+        self.assertEqual(failed.kind, "command_failed")
+        self.assertEqual(failed.exit_code, 1)
+        self.assertIn("exit=1", failed.detail)
+
+        blocked = record_from_tool(
+            "write_file", {"path": "x"}, "[blocked] Recovery mode ENV_FIX"
+        )
+        self.assertEqual(blocked.kind, "blocked")
+        self.assertFalse(blocked.ok)
 
     def test_format_trace_summary(self):
         buf = TraceBuffer()
         buf.add(record_from_tool("run_shell", {"command": "pwd"}, "/tmp"))
-        buf.add(record_from_tool("write_file", {"path": "x"}, "[error] fail"))
+        buf.add(record_from_tool("write_file", {"path": "x"}, result_error("[error] fail")))
+        buf.add(
+            record_from_tool(
+                "run_shell",
+                {"command": "pytest"},
+                from_shell(ShellObservation(exit_code=1)),
+            )
+        )
         text = format_trace_summary(buf.records)
         self.assertTrue(text.startswith(TRACE_MARKER))
         self.assertIn("run_shell", text)
-        self.assertIn("FAIL", text)
+        self.assertIn("ERROR", text)
+        self.assertIn("FAIL exit=1", text)
 
     def test_compress_trace_replaces_middle_keeps_tool_pairs(self):
         messages = [{"role": "system", "content": "sys"}]

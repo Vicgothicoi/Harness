@@ -23,7 +23,7 @@ class ListFilesFilterTests(unittest.TestCase):
                 git.mkdir()
                 (git / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
 
-                listing = list_files(".")
+                listing = list_files(".").payload
                 self.assertIn("index.html", listing)
                 self.assertIn("messages.txt", listing)
                 self.assertIn("_trace_builder.jsonl", listing)

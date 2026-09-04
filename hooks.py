@@ -28,7 +28,13 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from tool_result import ToolResult, wrap_legacy
+
 log = logging.getLogger("harness")
+
+
+def _as_result(result: object) -> ToolResult:
+    return wrap_legacy(result)
 
 
 class AgentHook(ABC):
@@ -49,7 +55,7 @@ class AgentHook(ABC):
         self,
         tool_name: str,
         tool_args: dict,
-        result: str,
+        result: object,
         messages: list[dict],
         runtime_state=None,
         agent_name: str | None = None,
@@ -95,6 +101,7 @@ class LoopDetectionHook(AgentHook):
         self.file_edit_counts: dict[str, int] = {}
         self.recent_commands: list[str] = []
         self._file_warned: set[str] = set()  # avoid spamming same warning
+        self._consecutive_failures = 0
 
     @staticmethod
     def _normalize_command(cmd: str) -> str:
@@ -116,13 +123,14 @@ class LoopDetectionHook(AgentHook):
         self,
         tool_name: str,
         tool_args: dict,
-        result: str,
+        result: object,
         messages: list[dict],
         runtime_state=None,
         agent_name: str | None = None,
     ) -> str | None:
+        outcome = _as_result(result)
         # Track file edits
-        if tool_name == "write_file":
+        if tool_name == "write_file" and outcome.kind != "blocked":
             path = tool_args.get("path", "")
             self.file_edit_counts[path] = self.file_edit_counts.get(path, 0) + 1
             count = self.file_edit_counts[path]
@@ -157,22 +165,18 @@ class LoopDetectionHook(AgentHook):
                         "STOP. Re-read the error output carefully. Try a fundamentally different approach."
                     )
 
-            # Also detect rapid-fire failed commands (different commands, same error)
-            if "[error]" in result or "command not found" in result.lower():
-                recent_errors = 0
-                for msg in reversed(messages[-8:]):
-                    content = msg.get("content", "")
-                    if msg.get("role") == "tool" and (
-                        "[error]" in content or "command not found" in content.lower()
-                    ):
-                        recent_errors += 1
-                if recent_errors >= 3:
+            if outcome.kind in {"error", "command_failed"}:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= 3:
+                    self._consecutive_failures = 0
                     return (
                         "[SYSTEM] Multiple consecutive commands have failed. "
                         "Stop and diagnose the root cause before trying more commands. "
                         "Check: Is the required tool installed? Are you in the right directory? "
                         "Is there a dependency missing?"
                     )
+            elif outcome.kind == "ok":
+                self._consecutive_failures = 0
 
         return None
 
@@ -487,27 +491,27 @@ class RecoveryStrategyHook(AgentHook):
         return any(pattern in lowered for pattern in self.VERIFICATION_FAILURE_PATTERNS)
 
     def observe_tool_result(
-        self, tool_name: str, tool_args: dict, result: str, runtime_state
+        self, tool_name: str, tool_args: dict, result: object, runtime_state
     ) -> None:
         if runtime_state is None:
             return
-        if result.startswith("[error]"):
-            self._register_failure(result, runtime_state)
-            if (
-                self._is_env_failure(result)
-                and runtime_state.recovery.repeat_count >= 2
-            ):
+        outcome = _as_result(result)
+        text = outcome.payload_text()
+        if outcome.kind == "blocked":
+            return
+
+        env_fail = self._is_env_failure(text)
+        if outcome.kind == "error" or (outcome.kind == "command_failed" and env_fail):
+            self._register_failure(text.split("\n", 1)[0][:300], runtime_state)
+            if env_fail and runtime_state.recovery.repeat_count >= 2:
                 self._set_mode(runtime_state, "ENV_FIX")
                 return
-            if runtime_state.recovery.repeat_count >= 2:
+            if outcome.kind == "error" and runtime_state.recovery.repeat_count >= 2:
                 self._set_mode(runtime_state, "SPEC_RECHECK")
                 return
+            return
 
-        if (
-            tool_name in self.ACTION_TOOLS
-            and not result.startswith("[error]")
-            and not result.startswith("[blocked]")
-        ):
+        if tool_name in self.ACTION_TOOLS and outcome.task_ok:
             runtime_state.recovery.last_successful_action = tool_name
 
     def observe_verification_failure(self, failure_text: str, runtime_state) -> None:
@@ -584,15 +588,16 @@ class RecoveryStrategyHook(AgentHook):
         self,
         tool_name: str,
         tool_args: dict,
-        result: str,
+        result: object,
         messages: list[dict],
         runtime_state=None,
         agent_name: str | None = None,
     ) -> str | None:
         if agent_name != "builder" or runtime_state is None:
             return None
-        self.observe_tool_result(tool_name, tool_args, result, runtime_state)
-        if result.startswith("[error]") or result.startswith("[blocked]"):
+        outcome = _as_result(result)
+        self.observe_tool_result(tool_name, tool_args, outcome, runtime_state)
+        if outcome.kind in {"error", "blocked"}:
             return None
 
         if runtime_state.recovery.mode != "NORMAL":
@@ -600,6 +605,7 @@ class RecoveryStrategyHook(AgentHook):
 
         if tool_name == "run_shell":
             command = tool_args.get("command", "")
+            payload = outcome.payload_text()
             if (
                 runtime_state.recovery.mode == "ENV_FIX"
                 and command
@@ -608,8 +614,8 @@ class RecoveryStrategyHook(AgentHook):
                 self._clear_mode(runtime_state)
             elif self._is_read_only_command(
                 command
-            ) and self._looks_like_verification_failure(result):
-                self.observe_verification_failure(result, runtime_state)
+            ) and self._looks_like_verification_failure(payload):
+                self.observe_verification_failure(payload, runtime_state)
 
         if tool_name == "write_file":
             self.observe_edit_attempt(tool_args.get("path", ""), runtime_state)
@@ -744,7 +750,7 @@ class ErrorGuidanceHook(AgentHook):
         self,
         tool_name: str,
         tool_args: dict,
-        result: str,
+        result: object,
         messages: list[dict],
         runtime_state=None,
         agent_name: str | None = None,
@@ -752,13 +758,19 @@ class ErrorGuidanceHook(AgentHook):
         if tool_name != "run_shell":
             return None
 
-        result_lower = result.lower()
+        outcome = _as_result(result)
+        if outcome.task_ok:
+            self._last_guidance_type = None
+            return None
 
-        # Skip if no error indicators
+        result_lower = outcome.payload_text().lower()
+
+        # Skip if no error indicators in the command output
         if (
-            "[error]" not in result_lower
-            and "error" not in result_lower
+            "error" not in result_lower
             and "not found" not in result_lower
+            and "failed" not in result_lower
+            and "traceback" not in result_lower
         ):
             self._last_guidance_type = None
             return None

@@ -195,7 +195,7 @@ class LongTermMemoryTests(unittest.TestCase):
         from tools import remember_preference
 
         result = remember_preference("test_framework", "pytest")
-        self.assertIn("Saved preference", result)
+        self.assertIn("Saved preference", result.payload)
         ltm = LongTermMemory.load()
         self.assertEqual(ltm.user_preferences["test_framework"], "pytest")
 

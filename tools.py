@@ -10,7 +10,14 @@ import os
 from pathlib import Path
 
 import config
-from compression.observation import ShellObservation
+from tool_result import (
+    ShellObservation,
+    ToolResult,
+    from_shell,
+    result_error,
+    result_ok,
+    wrap_legacy,
+)
 
 _RESULT_HARD_CAP = int(getattr(config, "TOOL_RESULT_HARD_CAP", 1_000_000))
 _LIST_FILES_MAX = 200
@@ -42,62 +49,64 @@ def _resolve(path: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def read_file(path: str) -> str:
+def read_file(path: str) -> ToolResult:
     p = _resolve(path)
     if not p.exists():
-        return f"[error] File not found: {path}"
+        return result_error(f"[error] File not found: {path}")
     try:
         with p.open("r", encoding="utf-8", errors="replace") as f:
-            return f.read(_RESULT_HARD_CAP)
+            return result_ok(f.read(_RESULT_HARD_CAP))
     except OSError as e:
-        return f"[error] {e}"
+        return result_error(f"[error] {e}")
 
 
-def read_skill_file(path: str) -> str:
+def read_skill_file(path: str) -> ToolResult:
     """Read a file from the skills directory (outside workspace). Path must be relative to project root."""
     project_root = Path(__file__).parent
     p = (project_root / path).resolve()
     # Must stay within the skills directory
     skills_dir = (project_root / "skills").resolve()
     if not str(p).startswith(str(skills_dir)):
-        return f"[error] Path must be inside skills/ directory: {path}"
+        return result_error(f"[error] Path must be inside skills/ directory: {path}")
     if not p.exists():
-        return f"[error] Skill file not found: {path}"
-    return _hard_cap(
-        p.read_text(encoding="utf-8", errors="replace"),
-        _SKILL_FILE_HARD_CAP,
+        return result_error(f"[error] Skill file not found: {path}")
+    return result_ok(
+        _hard_cap(
+            p.read_text(encoding="utf-8", errors="replace"),
+            _SKILL_FILE_HARD_CAP,
+        )
     )
 
 
-def write_file(path: str, content: str) -> str:
+def write_file(path: str, content: str) -> ToolResult:
     if not path or not path.strip():
-        return "[error] Empty file path"
+        return result_error("[error] Empty file path")
     p = _resolve(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
-    return f"Wrote {len(content)} chars to {path}"
+    return result_ok(f"Wrote {len(content)} chars to {path}")
 
 
-def remember_preference(key: str, value: str) -> str:
+def remember_preference(key: str, value: str) -> ToolResult:
     """Explicitly store a user preference in global long-term memory."""
     from memory.long_term_memory import LongTermMemory
 
     key = (key or "").strip()
     value = (value or "").strip()
     if not key:
-        return "[error] remember_preference requires a non-empty key"
+        return result_error("[error] remember_preference requires a non-empty key")
     if not value:
-        return "[error] remember_preference requires a non-empty value"
+        return result_error("[error] remember_preference requires a non-empty value")
     ltm = LongTermMemory.load()
     ltm.set_preference(key, value)
     path = ltm.save()
-    return f"Saved preference {key}={value!r} to {path}"
+    return result_ok(f"Saved preference {key}={value!r} to {path}")
 
 
-def list_files(directory: str = ".") -> str:
+def list_files(directory: str = ".") -> ToolResult:
     p = _resolve(directory)
     if not p.is_dir():
-        return f"[error] Not a directory: {directory}"
+        return result_error(f"[error] Not a directory: {directory}")
     entries = []
     ws = Path(config.WORKSPACE).resolve()
     for item in sorted(p.rglob("*")):
@@ -108,13 +117,13 @@ def list_files(directory: str = ".") -> str:
             continue
         entries.append(str(rel))
     if not entries:
-        return "(empty)"
+        return result_ok("(empty)")
     if len(entries) > _LIST_FILES_MAX:
-        return (
+        return result_ok(
             "\n".join(entries[:_LIST_FILES_MAX])
             + f"\n...[list stopped at {_LIST_FILES_MAX} files]"
         )
-    return "\n".join(entries)
+    return result_ok("\n".join(entries))
 
 
 def run_shell(
@@ -122,24 +131,31 @@ def run_shell(
     timeout: int = 300,
     runtime_state=None,
     agent_name: str | None = None,
-) -> str | ShellObservation:
+) -> ToolResult:
     """Run a shell command inside the agent's persistent shell session."""
     if runtime_state is None or runtime_state.shell_session is None:
-        return "[error] No active shell session for run_shell"
+        return result_error("[error] No active shell session for run_shell")
     try:
         shell_result = runtime_state.shell_session.run(command, timeout=timeout)
         if shell_result.timed_out:
-            return (
-                f"[error] Command timed out after {timeout}s. "
-                f"If this command legitimately needs more time (e.g. compilation, training), "
-                f"retry with a larger timeout parameter."
+            return result_error(
+                (
+                    f"[error] Command timed out after {timeout}s. "
+                    f"If this command legitimately needs more time (e.g. compilation, training), "
+                    f"retry with a larger timeout parameter."
+                ),
+                exit_code=shell_result.exit_code,
             )
-        return ShellObservation(
-            stdout=_hard_cap(shell_result.stdout or ""),
-            stderr=_hard_cap(shell_result.stderr or ""),
+        return from_shell(
+            ShellObservation(
+                stdout=_hard_cap(shell_result.stdout or ""),
+                stderr=_hard_cap(shell_result.stderr or ""),
+                exit_code=shell_result.exit_code,
+                timed_out=False,
+            )
         )
     except Exception as e:
-        return f"[error] {e}"
+        return result_error(f"[error] {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +163,7 @@ def run_shell(
 # ---------------------------------------------------------------------------
 
 
-def delegate_task(task: str, role: str = "assistant") -> str:
+def delegate_task(task: str, role: str = "assistant") -> ToolResult:
     """
     Spawn a sub-agent in a completely isolated context to handle a subtask.
 
@@ -184,8 +200,8 @@ def delegate_task(task: str, role: str = "assistant") -> str:
     result = sub.run(task)
 
     if not result:
-        return "[sub-agent returned no output]"
-    return _hard_cap(result)
+        return result_error("[sub-agent returned no output]")
+    return result_ok(_hard_cap(result))
 
 
 def _run_shell_description() -> str:
@@ -487,7 +503,7 @@ def _validate_and_fix(name: str, arguments: dict) -> tuple[dict, str | None]:
 # ---------------------------------------------------------------------------
 
 
-def web_search(query: str, max_results: int = 5) -> str:
+def web_search(query: str, max_results: int = 5) -> ToolResult:
     """Search the web using DuckDuckGo and return text results.
     Uses DDG's lite HTML endpoint — no API key needed, works in any container.
     """
@@ -530,15 +546,17 @@ def web_search(query: str, max_results: int = 5) -> str:
             results.append(f"{i+1}. {title}\n   {real_url}\n   {snippet[:200]}\n")
 
         if results:
-            return f"Search results for: {query}\n\n" + "\n".join(results)
+            return result_ok(
+                f"Search results for: {query}\n\n" + "\n".join(results)
+            )
 
-        return f"No results found for: {query}"
+        return result_ok(f"No results found for: {query}")
 
     except Exception as e:
-        return f"[error] Web search failed: {e}"
+        return result_error(f"[error] Web search failed: {e}")
 
 
-def web_fetch(url: str) -> str:
+def web_fetch(url: str) -> ToolResult:
     """Fetch the content of a web page and return as text."""
     import urllib.request
     import re
@@ -561,10 +579,10 @@ def web_fetch(url: str) -> str:
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
 
-        return _hard_cap(text) or "(empty page)"
+        return result_ok(_hard_cap(text) or "(empty page)")
 
     except Exception as e:
-        return f"[error] Web fetch failed: {e}"
+        return result_error(f"[error] Web fetch failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -586,20 +604,20 @@ TOOL_DISPATCH = {
 
 def execute_tool(
     name: str, arguments: dict, runtime_state=None, agent_name: str | None = None
-) -> str | ShellObservation:
+) -> ToolResult:
     """Execute a tool by name with pre-validation and auto-correction."""
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
-        return f"[error] Unknown tool: {name}"
+        return result_error(f"[error] Unknown tool: {name}")
 
     # Pre-validate and auto-correct arguments
     arguments, fix_warning = _validate_and_fix(name, arguments)
 
     # If validation returned a blocking error (no fix possible), return it
     if fix_warning and fix_warning.startswith("[auto-fix] Empty"):
-        return fix_warning
+        return result_error(fix_warning)
     if fix_warning and "interactive command" in fix_warning:
-        return fix_warning
+        return result_error(fix_warning)
 
     try:
         if name == "run_shell":
@@ -607,16 +625,9 @@ def execute_tool(
         else:
             result = fn(**arguments)
     except Exception as e:
-        result = f"[error] {type(e).__name__}: {e}"
+        result = result_error(f"[error] {type(e).__name__}: {e}")
 
-    # Prepend the auto-fix warning so the model knows what was corrected
-    if fix_warning:
-        if isinstance(result, ShellObservation):
-            result = ShellObservation(
-                stdout=f"{fix_warning}\n\n{result.stdout}",
-                stderr=result.stderr,
-            )
-        else:
-            result = f"{fix_warning}\n\n{result}"
+    if not isinstance(result, ToolResult):
+        result = wrap_legacy(result)
 
-    return result
+    return result.with_auto_fix(fix_warning)

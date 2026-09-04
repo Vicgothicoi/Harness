@@ -1,15 +1,13 @@
 """
-Observation compression — the only conversation-facing truncation policy.
-
-Tools may apply a hard cap to avoid OOM; this layer decides what the model sees.
+Observation compression — Tools may apply a hard cap to avoid OOM; this layer decides what the model sees.
 Rules-only (no LLM).
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 import config
+from tool_result import ShellObservation, ToolResult
 
 _TOOL_MAX = {
     "run_shell": 10000,
@@ -27,14 +25,6 @@ _SKIP_COMPRESSION = {"read_skill_file"}
 _ERROR_PATTERN = re.compile(
     r"(?i)(error|fail|assert|exception|traceback|warning|not found|denied|refused|fatal)",
 )
-
-
-@dataclass
-class ShellObservation:
-    """Structured run_shell result. Compression needs stdout and stderr split."""
-
-    stdout: str = ""
-    stderr: str = ""
 
 
 def _limit_for(tool_name: str) -> int:
@@ -73,6 +63,24 @@ def _as_text(result: object) -> str:
     return result
 
 
+def _status_prefix(result: ToolResult) -> str:
+    """Header for non-shell ToolResult metadata. Shell headers live in _compress_shell."""
+    if isinstance(result.payload, ShellObservation):
+        return ""
+    if result.exit_code is not None and result.kind != "ok":
+        return f"exit={result.exit_code}"
+    return ""
+
+
+def _shell_status_prefix(obs: ShellObservation) -> str:
+    parts: list[str] = []
+    if obs.timed_out:
+        parts.append("timed_out=true")
+    if obs.exit_code != 0:
+        parts.append(f"exit={obs.exit_code}")
+    return " ".join(parts)
+
+
 def compress_observation(
     tool_name: str,
     tool_args: dict | None,
@@ -81,17 +89,32 @@ def compress_observation(
     """
     Compress a single tool result for the conversation window.
     """
+    auto_fix = None
+    header = ""
+    if isinstance(result, ToolResult):
+        auto_fix = result.auto_fix
+        header = _status_prefix(result)
+        result = result.payload
+
     if tool_name in _SKIP_COMPRESSION:
-        return _as_text(result)
+        out = _as_text(result)
+    else:
+        limit = _limit_for(tool_name)
+        if tool_name == "run_shell":
+            out = _compress_shell(result, limit, tool_args)
+        else:
+            text = _as_text(result)
+            out = (
+                text
+                if len(text) <= limit
+                else _compress_prefix_lines(text, limit, tool_name, tool_args)
+            )
 
-    limit = _limit_for(tool_name)
-    if tool_name == "run_shell":
-        return _compress_shell(result, limit, tool_args)
-
-    text = _as_text(result)
-    if len(text) <= limit:
-        return text
-    return _compress_prefix_lines(text, limit, tool_name, tool_args)
+    if header:
+        out = header + "\n" + out
+    if auto_fix:
+        return f"{auto_fix}\n\n{out}"
+    return out
 
 
 def _compress_shell(
@@ -101,8 +124,13 @@ def _compress_shell(
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         if not stdout and not stderr:
-            return "(no output)"
-        return _smart_truncate_output(stdout, stderr, limit)
+            body = "(no output)"
+        else:
+            body = _smart_truncate_output(stdout, stderr, limit)
+        prefix = _shell_status_prefix(result)
+        if prefix:
+            return prefix + "\n" + body
+        return body
 
     text = _as_text(result)
     if text.startswith("[error]"):
@@ -118,9 +146,7 @@ def _smart_truncate_output(stdout: str, stderr: str, limit: int) -> str:
     """Preserve stderr and error-like lines from the middle of stdout.
 
     Strategy:
-    - Always keep stderr in full (up to 40% of the budget) — errors live here.
-    - Extract lines containing error/warning keywords from the middle of stdout
-      that would otherwise be lost in a naive head+tail cut.
+    - Keep tail for stderr.
     - Use head + important-middle + tail for stdout.
     """
     combined = (stdout + "\n" + stderr).strip() if stderr else stdout
