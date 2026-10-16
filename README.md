@@ -78,11 +78,11 @@ python harness.py --profile reasoning "What is the escape velocity of Mars?"
 | `swe-bench` | 在真实仓库里修 GitHub issue | 定位 → 最小补丁 → 跑测试 |
 | `reasoning` | 知识密集型问答 | 分步计算/推理，答案写入 `answer.md` |
 
-自定义场景：继承 `profiles/base.py` 中的 `BaseProfile`，实现后再注册到 `profiles/__init__.py`。
+自定义场景：继承 `harness/profiles/base.py` 中的 `BaseProfile`，实现后再注册到 `harness/profiles/registry.py`。
 
 ## 记忆
 
-Context Builder（`memory/working_memory.py`）按固定顺序把各层投影进对话窗口，原地替换、不重复追加：
+Context Builder（`harness/memory/working_memory.py`）按固定顺序把各层投影进对话窗口，原地替换、不重复追加：
 
 | 层 | 作用 | 落盘 |
 |----|------|------|
