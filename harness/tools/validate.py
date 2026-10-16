@@ -51,6 +51,20 @@ def _validate_and_fix(name: str, arguments: dict) -> tuple[dict, str | None]:
                     warning = f"[auto-fix] Converted absolute path '{path}' to relative '{arguments['path']}'"
                     break
 
+        start_line = arguments.get("start_line", 1)
+        if start_line is None or start_line == "":
+            arguments["start_line"] = 1
+        else:
+            try:
+                arguments["start_line"] = max(int(start_line), 1)
+            except (TypeError, ValueError):
+                arguments["start_line"] = 1
+                warning = (
+                    f"[auto-fix] Invalid start_line {start_line!r} — using 1."
+                    if not warning
+                    else warning
+                )
+
     elif name == "run_shell":
         command = arguments.get("command", "")
 

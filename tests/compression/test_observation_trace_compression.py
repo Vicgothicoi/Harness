@@ -65,9 +65,32 @@ class ObservationCompressionTests(unittest.TestCase):
         self.assertIn("[OBSERVATION COMPRESSED]", out)
         self.assertTrue(out.startswith("1| 0001 "))
         self.assertIn("big.txt", out)
+        self.assertIn("next_start_line=", out)
+        self.assertIn('Call read_file(path="big.txt", start_line=', out)
         prefix = out.split("[OBSERVATION COMPRESSED]", 1)[0]
         self.assertNotIn("0200 ", prefix)
         self.assertLess(len(out), len(big))
+
+    def test_read_file_line_numbers_follow_start_line(self):
+        payload = "\n".join(f"L{i:04d} " + ("C" * 80) for i in range(80, 280))
+        out = compress_observation(
+            "read_file", {"path": "big.txt", "start_line": 80}, payload
+        )
+        self.assertTrue(out.startswith("80| L0080 "))
+        self.assertIn("[OBSERVATION COMPRESSED]", out)
+        self.assertRegex(out, r"next_start_line=\d+")
+        self.assertRegex(
+            out, r'Call read_file\(path="big.txt", start_line=\d+\) to continue'
+        )
+        prefix = out.split("[OBSERVATION COMPRESSED]", 1)[0]
+        self.assertNotIn("1| L0080", prefix)
+
+    def test_web_fetch_does_not_suggest_read_file_continue(self):
+        big = "\n".join(f"x{i:04d} " + ("B" * 80) for i in range(200))
+        out = compress_observation("web_fetch", {"url": "http://example"}, big)
+        self.assertIn("[OBSERVATION COMPRESSED]", out)
+        self.assertNotIn("next_start_line", out)
+        self.assertIn("narrower path/command", out)
 
     def test_read_skill_file_skips_compression(self):
         big = "S" * 20000

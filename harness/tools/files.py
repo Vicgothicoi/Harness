@@ -13,13 +13,45 @@ from harness.tools.workspace import (
     resolve_path,
 )
 
-def read_file(path: str) -> ToolResult:
+def _coerce_start_line(start_line: int | str | None) -> int | str:
+    """Return a 1-based start line, or an error string."""
+    if start_line is None or start_line == "":
+        return 1
+    try:
+        value = int(start_line)
+    except (TypeError, ValueError):
+        return f"[error] start_line must be an integer, got {start_line!r}"
+    if value < 1:
+        return f"[error] start_line must be >= 1, got {value}"
+    return value
+
+
+def read_file(path: str, start_line: int | str = 1) -> ToolResult:
+    """Read a workspace file, optionally starting at a 1-based line."""
+    parsed = _coerce_start_line(start_line)
+    if isinstance(parsed, str):
+        return result_error(parsed)
+    start_line = parsed
+
     p = resolve_path(path)
     if not p.exists():
         return result_error(f"[error] File not found: {path}")
     try:
         with p.open("r", encoding="utf-8", errors="replace") as f:
-            return result_ok(f.read(RESULT_HARD_CAP))
+            if start_line > 1:
+                for skipped in range(1, start_line):
+                    if f.readline() == "":
+                        return result_error(
+                            f"[error] start_line={start_line} is past end of file "
+                            f"({path} has {skipped - 1} lines)"
+                        )
+            content = f.read(RESULT_HARD_CAP)
+            if start_line > 1 and content == "":
+                return result_error(
+                    f"[error] start_line={start_line} is past end of file "
+                    f"({path} has {start_line - 1} lines)"
+                )
+            return result_ok(content)
     except OSError as e:
         return result_error(f"[error] {e}")
 

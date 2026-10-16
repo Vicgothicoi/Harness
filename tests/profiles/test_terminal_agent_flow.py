@@ -17,7 +17,7 @@ def _install_fake_openai_module() -> None:
 _install_fake_openai_module()
 
 from harness.orchestration.agent import Agent
-from harness.hooks import RecoveryStrategyHook
+from harness.hooks import EvaluatorDeliverableHook, RecoveryStrategyHook
 from harness.profiles.terminal import TerminalProfile
 
 
@@ -50,6 +50,16 @@ class AgentRuntimeStateTests(unittest.TestCase):
         self.assertFalse(app.planner().enable_memory)
         self.assertTrue(app.builder().enable_memory)
         self.assertFalse(app.evaluator().enable_memory)
+
+        self.assertTrue(
+            any(isinstance(h, EvaluatorDeliverableHook) for h in app.evaluator().hooks)
+        )
+        self.assertTrue(
+            any(
+                isinstance(h, EvaluatorDeliverableHook)
+                for h in terminal.evaluator().hooks
+            )
+        )
 
     def test_terminal_builder_uses_recovery_hook_without_enforcement(self):
         hooks = TerminalProfile().builder().hooks

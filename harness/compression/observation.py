@@ -49,6 +49,17 @@ def _source_hint(tool_args: dict | None) -> str:
     return ""
 
 
+def _file_start_line(tool_name: str, tool_args: dict | None) -> int:
+    """1-based file line of the first payload line (read_file start_line)."""
+    if tool_name != "read_file" or not isinstance(tool_args, dict):
+        return 1
+    raw = tool_args.get("start_line", 1)
+    try:
+        return max(int(raw), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def _as_text(result: object) -> str:
     if isinstance(result, ShellObservation):
         stdout = (result.stdout or "").strip()
@@ -202,38 +213,98 @@ def _compress_prefix_lines(
     tool_name: str,
     tool_args: dict | None,
 ) -> str:
-    """Keep a numbered prefix; drop the rest."""
+    """Keep a numbered prefix of whole lines; drop the rest."""
     hint = _source_hint(tool_args)
+    start_line = _file_start_line(tool_name, tool_args)
+    path = ""
+    if isinstance(tool_args, dict) and tool_args.get("path"):
+        path = str(tool_args["path"])[:120]
     lines = text.splitlines()
     if not lines:
         lines = [text]
     total_lines = len(lines)
 
-    footer = (
-        f"\n[OBSERVATION COMPRESSED] showing first {{kept}} of {total_lines} lines, "
-        f"omitted ~{{omitted}} chars "
-        f"(tool={tool_name}{hint}; limit={limit}). "
-        "Re-read with a narrower path/command if you need the rest.\n"
+    footer_template = _prefix_footer(
+        tool_name=tool_name,
+        hint=hint,
+        path=path,
+        start_line=start_line,
+        total_lines=total_lines,
+        limit=limit,
     )
-    footer_est = len(footer.format(kept=total_lines, omitted=len(text)))
+    footer_est = len(
+        footer_template.format(
+            first=start_line,
+            last=start_line + max(total_lines - 1, 0),
+            kept=total_lines,
+            next_start=start_line + total_lines,
+            omitted=len(text),
+        )
+    )
     budget = max(limit - footer_est, 64)
 
     out_parts: list[str] = []
     used = 0
     kept = 0
-    for i, line in enumerate(lines, 1):
-        numbered = f"{i}| {line}\n"
+    truncated_mid_line = False
+    for i, line in enumerate(lines):
+        file_line = start_line + i
+        numbered = f"{file_line}| {line}\n"
         if used + len(numbered) > budget:
             if kept == 0:
-                prefix = f"{i}| "
+                prefix = f"{file_line}| "
                 room = max(budget - len(prefix) - 1, 16)
                 out_parts.append(prefix + line[:room] + "\n")
                 kept = 1
+                truncated_mid_line = True
             break
         out_parts.append(numbered)
         used += len(numbered)
         kept += 1
 
+    first = start_line
+    last = start_line + kept - 1 if kept else start_line
+    # Mid-line cuts skip the remainder of that line so the next call cannot loop.
+    next_start = last + 1
     kept_raw = "\n".join(lines[:kept])
     omitted = max(len(text) - len(kept_raw), 0)
-    return "".join(out_parts) + footer.format(kept=kept, omitted=omitted)
+    footer = footer_template.format(
+        first=first,
+        last=last,
+        kept=kept,
+        next_start=next_start,
+        omitted=omitted,
+    )
+    if truncated_mid_line:
+        footer = footer.rstrip("\n") + " (line truncated; remainder skipped)\n"
+    return "".join(out_parts) + footer
+
+
+def _prefix_footer(
+    *,
+    tool_name: str,
+    hint: str,
+    path: str,
+    start_line: int,
+    total_lines: int,
+    limit: int,
+) -> str:
+    if tool_name == "read_file":
+        continue_at = (
+            f'Call read_file(path="{path}", start_line={{next_start}}) to continue.'
+            if path
+            else "Call read_file again with start_line={next_start} to continue."
+        )
+        return (
+            "\n[OBSERVATION COMPRESSED] showing lines {first}-{last} "
+            f"({{kept}} of {total_lines} in this chunk, start_line={start_line}), "
+            f"omitted ~{{omitted}} chars "
+            f"(tool={tool_name}{hint}; limit={limit}). "
+            f"next_start_line={{next_start}}. {continue_at}\n"
+        )
+    return (
+        "\n[OBSERVATION COMPRESSED] showing first {kept} of "
+        f"{total_lines} lines, omitted ~{{omitted}} chars "
+        f"(tool={tool_name}{hint}; limit={limit}). "
+        "Re-read with a narrower path/command if you need the rest.\n"
+    )

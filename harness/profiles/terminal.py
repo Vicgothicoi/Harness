@@ -31,6 +31,7 @@ from harness.hooks import (
     TimeBudgetHook,
     ErrorGuidanceHook,
     RecoveryStrategyHook,
+    EvaluatorDeliverableHook,
 )
 
 # Commands to bootstrap environment awareness at the start of each build.
@@ -361,6 +362,7 @@ Format for feedback.md:
 Use write_file to save to feedback.md, then stop.
 """,
             time_budget=self._get("evaluator_budget"),
+            hooks=[EvaluatorDeliverableHook()],
         )
 
     # No contract negotiation — TB2 tasks are already well-specified

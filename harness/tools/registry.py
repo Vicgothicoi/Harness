@@ -39,7 +39,11 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file in the workspace.",
+            "description": (
+                "Read a file in the workspace. If the result is marked "
+                "[OBSERVATION COMPRESSED], call again with start_line set to the "
+                "next_start_line from the footer to continue from the cut."
+            ),
             "parameters": {
                 "type": "object",
                 "required": ["path"],
@@ -47,7 +51,15 @@ TOOL_SCHEMAS = [
                     "path": {
                         "type": "string",
                         "description": "Relative path inside workspace",
-                    }
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": (
+                            "1-based file line to start reading from (inclusive). "
+                            "Use after a truncated read to continue. Default 1."
+                        ),
+                        "default": 1,
+                    },
                 },
             },
         },

@@ -167,13 +167,17 @@ class BaseProfile(ABC):
             task += f"\nScore history: {score_history}\n"
         return task
 
-    def extract_score(self, feedback_text: str) -> float:
+    def extract_score(self, feedback_text: str) -> float | None:
         """
         Parse the score from evaluator output.
         Override for custom scoring formats.
         Default: looks for 'Average: X/10' pattern.
+        Returns None when feedback is missing or has no parseable score
+        (do not treat that as 0/10).
         """
         import re
+        if not (feedback_text or "").strip():
+            return None
         match = re.search(r"[Aa]verage[:\s]*(\d+\.?\d*)\s*/\s*10", feedback_text)
         if match:
             return float(match.group(1))
@@ -181,7 +185,7 @@ class BaseProfile(ABC):
         if scores:
             vals = [float(s) for s in scores]
             return sum(vals) / len(vals)
-        return 0.0
+        return None
 
     def resolve_task_timeout(self, user_prompt: str) -> float | None:
         """

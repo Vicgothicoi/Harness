@@ -13,7 +13,7 @@ from harness.profiles.app_builder.prompts import (
     PLANNER_SYSTEM,
 )
 from harness.integrations.browser.client import BrowserMcpClient
-from harness.hooks import LoopDetectionHook, TimeBudgetHook
+from harness.hooks import EvaluatorDeliverableHook, LoopDetectionHook, TimeBudgetHook
 from harness.profiles.base import BaseProfile, AgentConfig
 
 
@@ -62,6 +62,7 @@ class AppBuilderProfile(BaseProfile):
         return AgentConfig(
             system_prompt=EVALUATOR_SYSTEM,
             mcp_bridges=[BrowserMcpClient(transport="inprocess")],
+            hooks=[EvaluatorDeliverableHook()],
         )
 
     def contract_proposer(self) -> AgentConfig:

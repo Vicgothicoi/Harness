@@ -5,6 +5,7 @@ Analyze issue → locate code → write patch → run tests → iterate.
 from __future__ import annotations
 
 from harness.profiles.base import BaseProfile, AgentConfig
+from harness.hooks import EvaluatorDeliverableHook
 
 
 class SWEBenchProfile(BaseProfile):
@@ -105,6 +106,7 @@ Output format — write to feedback.md:
 
 Use write_file to save to feedback.md.
 """,
+            hooks=[EvaluatorDeliverableHook()],
         )
 
     def pass_threshold(self) -> float:

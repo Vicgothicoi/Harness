@@ -249,20 +249,27 @@ class Harness:
                     f"Evaluation round {round_num} completed in {time.time() - eval_start:.0f}s"
                 )
 
-                # Check score
+                # Check score — missing/unparseable feedback is not a 0.
                 feedback_text = ""
                 if feedback_path.exists():
                     feedback_text = feedback_path.read_text(encoding="utf-8")
                 round_score = self.profile.extract_score(feedback_text)
-                score_history.append(round_score)
-                log.info(
-                    f"Round {round_num} average score: {round_score:.1f} / 10  (threshold: {threshold})"
-                )
-                log.info(f"Score history: {score_history}")
-
-                if round_score >= threshold:
-                    log.info(f"PASSED at round {round_num}.")
-                    passed = True
+                if round_score is None:
+                    log.warning(
+                        f"Round {round_num}: evaluation incomplete "
+                        f"({'no feedback.md' if not feedback_path.exists() else 'no parseable score in feedback.md'}); "
+                        "not recording 0/10."
+                    )
+                    log.info(f"Score history: {score_history}")
+                else:
+                    score_history.append(round_score)
+                    log.info(
+                        f"Round {round_num} average score: {round_score:.1f} / 10  (threshold: {threshold})"
+                    )
+                    log.info(f"Score history: {score_history}")
+                    if round_score >= threshold:
+                        log.info(f"PASSED at round {round_num}.")
+                        passed = True
             else:
                 log.info("No evaluator — single-pass execution.")
                 passed = True  # treat single-pass completion as done for LTM learn

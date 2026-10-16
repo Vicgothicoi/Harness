@@ -9,6 +9,7 @@ on the model's multimodal capabilities.
 from __future__ import annotations
 
 from harness.profiles.base import BaseProfile, AgentConfig
+from harness.hooks import EvaluatorDeliverableHook
 
 
 class ReasoningProfile(BaseProfile):
@@ -93,6 +94,7 @@ Output format — write to feedback.md:
 
 Use write_file to save to feedback.md.
 """,
+            hooks=[EvaluatorDeliverableHook()],
         )
 
     def pass_threshold(self) -> float:
@@ -101,6 +103,6 @@ Use write_file to save to feedback.md.
     def max_rounds(self) -> int:
         return 3
 
-    def extract_score(self, feedback_text: str) -> float:
+    def extract_score(self, feedback_text: str) -> float | None:
         """Same as base — looks for Average: X/10."""
         return super().extract_score(feedback_text)

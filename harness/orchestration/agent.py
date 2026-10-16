@@ -47,6 +47,8 @@ class AgentRuntimeState:
     trace_buffer: TraceBuffer = field(default_factory=TraceBuffer)
     action_tool_count: int = 0
     stop_signaled: bool = False
+    # Hook-set OpenAI tool_choice for this iteration (None = auto / none).
+    tool_choice: str | dict | None = None
 
 class Agent:
     """
@@ -240,6 +242,7 @@ class Agent:
         try:
             for iteration in range(1, config.MAX_AGENT_ITERATIONS + 1):
                 stopped = False
+                runtime_state.tool_choice = None
                 if self.enable_memory:
                     messages = self._refresh_state_memory(
                         messages, runtime_state, task, iteration, trace
@@ -318,7 +321,12 @@ class Agent:
                     kwargs["tools"] = (
                         TOOL_SCHEMAS + self.extra_tool_schemas + self._mcp_schemas
                     )
-                    kwargs["tool_choice"] = "none" if stopped else "auto"
+                    if stopped:
+                        kwargs["tool_choice"] = "none"
+                    elif runtime_state.tool_choice is not None:
+                        kwargs["tool_choice"] = runtime_state.tool_choice
+                    else:
+                        kwargs["tool_choice"] = "auto"
 
                 try:
                     trace.dump_messages(iteration, messages, token_count)
